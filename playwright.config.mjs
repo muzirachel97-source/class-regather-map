@@ -1,7 +1,8 @@
 import {defineConfig} from '@playwright/test';
 
-// 5190 by default; set E2E_PORT to run on another port if 5190 is taken.
-const PORT = Number(process.env.E2E_PORT || 5190);
+// Single source of truth for the e2e port (5192); E2E_PORT overrides it and is
+// handed to scripts/serve-e2e.sh via webServer.env.
+const PORT = Number(process.env.E2E_PORT || 5192);
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -19,6 +20,7 @@ export default defineConfig({
     timeout: 120_000,
     stdout: 'pipe',
     stderr: 'pipe',
+    env: {...process.env, E2E_PORT: String(PORT)},
   },
   projects: [
     {
@@ -36,6 +38,9 @@ export default defineConfig({
       use: {
         browserName: 'chromium',
         viewport: {width: 375, height: 667},
+        deviceScaleFactor: 2,
+        isMobile: true,
+        hasTouch: true,
       },
     },
   ],
