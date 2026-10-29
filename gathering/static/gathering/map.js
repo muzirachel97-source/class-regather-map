@@ -1,23 +1,36 @@
 import {chinaCountry, cityKey, provinceKey, regionCounts, scopeMembers} from './logic.js';
 
 let loading;
+let loadAttempt = 0;
+const plugins = ['AMap.DistrictLayer', 'AMap.DistrictSearch', 'AMap.Geocoder', 'AMap.ToolBar', 'AMap.Scale'];
+const isReady = A => A?.Map && A.DistrictLayer?.World && A.DistrictLayer?.Country && A.DistrictLayer?.Province && A.DistrictSearch && A.Geocoder && A.ToolBar && A.Scale;
 export function loadMap(config) {
-  if (window.AMap?.DistrictLayer) return Promise.resolve(window.AMap);
+  if (isReady(window.AMap)) return Promise.resolve(window.AMap);
   if (!config?.key) return Promise.reject(new Error('地图尚未配置。管理员填写高德 JS API Key 后即可显示地图；同学列表与历史记录仍可使用。'));
   if (loading) return loading;
   window._AMapSecurityConfig = config.security_js_code ? {securityJsCode: config.security_js_code} :
     {serviceHost: new URL(config.service_host, location.origin).href};
   loading = new Promise((resolve, reject) => {
     const script = document.createElement('script');
-    const timer = setTimeout(() => {loading = null; script.remove(); reject(new Error('地图加载超时，请检查网络、Key 和域名白名单。'));}, 18000);
-    // v1.4.15 retains the documented district picking API for all three levels.
-    script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${encodeURIComponent(config.key)}&plugin=Map3D,AMap.DistrictLayer,AMap.DistrictSearch,AMap.Geocoder,AMap.ToolBar,AMap.Scale`;
-    script.onload = () => {
-      clearTimeout(timer);
-      if (window.AMap?.DistrictLayer) resolve(window.AMap);
-      else {loading = null; reject(new Error('高德地图初始化失败，请检查 Key、服务代理和 WebGL 支持。'));}
+    const callback = `__regatherAMapReady${++loadAttempt}`;
+    const cleanup = () => {clearTimeout(timer); delete window[callback];};
+    const fail = message => {cleanup(); loading = null; script.remove(); reject(new Error(message));};
+    const timer = setTimeout(() => fail('地图加载超时，请检查网络、Key 和域名白名单。'), 30000);
+    window[callback] = () => {
+      if (!window.AMap?.Map || !window.AMap?.plugin) {
+        fail('高德地图初始化失败，请检查 Key、服务代理和 WebGL 支持。');
+        return;
+      }
+      window.AMap.plugin(plugins, () => {
+        if (!isReady(window.AMap)) {fail('高德行政区插件未能加载，请稍后重试。'); return;}
+        cleanup(); resolve(window.AMap);
+      });
     };
-    script.onerror = () => {clearTimeout(timer); loading = null; script.remove(); reject(new Error('无法连接高德地图，请稍后重试。'));};
+    // v1.4.15 retains the documented district picking API for all three levels.
+    // A dynamic script's load event only means the bootstrap file arrived. The
+    // provider callback and plugin callback establish SDK readiness separately.
+    script.src = `https://webapi.amap.com/maps?v=1.4.15&key=${encodeURIComponent(config.key)}&callback=${callback}&plugin=Map3D,${plugins.join(',')}`;
+    script.onerror = () => fail('无法连接高德地图，请稍后重试。');
     document.head.append(script);
   });
   return loading;
