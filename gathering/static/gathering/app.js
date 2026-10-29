@@ -1,13 +1,16 @@
-import {cityKey, createMemberOrder, dayNumber, dayString, municipalities, placeName, regionCounts, scopeMembers} from './logic.js';
+import {cityKey, createMemberOrder, municipalities, placeName} from './logic.js';
 import {ClassMap, chinaDivisions, createFootprintMap, districtChildren, loadMap} from './map.js';
-import {memberKey, presetRange} from './filter.js';
+import {consistentCounts, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
+import {createSheet} from './sheet.js';
+import {monthLabel, mountRange} from './range.js';
+import {memberRow, placeOf, regionTitle, section, sectionTitle, summaryLine} from './views.js';
 import {buildEntryLink, readEntryLink} from './links.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const options = (items, selected = '') => Object.entries(items).map(([value, name]) => `<option value="${escape(value)}" ${value === selected ? 'selected' : ''}>${escape(name)}</option>`).join('');
-const state = {level: 'china', province: '', selected: '', selectedName: '', unknown: false, search: '', members: [], at: '', boot: null};
-let map, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
+const state = {scope: 'china', view: {type: 'home'}, range: null, preset: '3y', earliest: '', members: [], boot: null};
+let map, sheet, rangeControl, footprintMap, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
 const apiRoot = new URL('api/', location.href);
 const orderMembers = createMemberOrder();
 const entryLink = readEntryLink(location.href);
@@ -55,91 +58,134 @@ async function boot() {
   const boot = state.boot;
   $('#class-title').textContent = boot.classroom.name;
   $('#class-description').textContent = boot.classroom.description || '看看大家落脚在哪座城，为下一次相聚留个坐标。';
-  $('#gate').hidden = boot.unlocked; $('#workspace').hidden = !boot.unlocked;
-  $('#account-nav').innerHTML = `${boot.me ? `<button id="my-profile">${escape(boot.me.name)} · 我的足迹</button><button id="my-password" class="text-button">改密码</button>` : '<button id="auth-open">认领 / 登录</button>'}
-    ${boot.is_admin ? '<button id="admin-open">班级管理</button>' : `<a class="quiet-link" href="/admin/login/?next=${encodeURIComponent(location.pathname)}">管理员</a>`}
-    ${boot.authenticated || boot.unlocked && boot.has_password ? '<button id="logout" class="text-button">退出</button>' : ''}`;
+  $('#gate').hidden = boot.unlocked; $('#app').hidden = !boot.unlocked;
+  $('#account').innerHTML = `${boot.me ? `<button id="my-profile" class="text-button" type="button">我的足迹</button><button id="my-password" class="text-button" type="button">改密码</button>` : '<button id="auth-open" class="text-button" type="button">认领 / 登录</button>'}
+    ${boot.is_admin ? '<button id="admin-open" class="text-button" type="button">班级管理</button>' : `<a class="quiet-link" href="/admin/login/?next=${encodeURIComponent(location.pathname)}">管理员</a>`}
+    ${boot.authenticated || boot.unlocked && boot.has_password ? '<button id="logout" class="text-button" type="button">退出</button>' : ''}`;
   $('#auth-open')?.addEventListener('click', () => authDialog('login'));
   $('#my-profile')?.addEventListener('click', () => run(() => memberDialog(boot.me.id)));
   $('#my-password')?.addEventListener('click', passwordDialog);
   $('#admin-open')?.addEventListener('click', () => run(adminDialog));
   $('#logout')?.addEventListener('click', () => run(async () => {await api('logout', 'POST', {}); location.reload();}));
   if (!boot.unlocked) {
-    $('#overview').textContent = '';
     $('#entry-hint').textContent = pendingClaim ? '认领信息已填好，请先输入查看码打开地图。' : entry.view_code ? '查看码已填好，点击打开班级地图即可。' : '';
     return;
   }
   $('#unlock-form [name="password"]').value = ''; entry.view_code = '';
   if (pendingClaim && !boot.me) {pendingClaim = false; authDialog('claim');}
-  $('#province-view').innerHTML = '<option value="">各省 / 市</option>' + options(boot.provinces, state.province);
-  state.at ||= boot.today; $('#snapshot-date').max = boot.today; $('#snapshot-date').value = state.at;
+  // The map ends where the sheet begins, so AMap's logo, scale and review number stay
+  // visible above it (they are never moved or hidden).
+  sheet ||= createSheet($('#sheet'), {stops: sheetStops, onChange: (detent, height) => {
+    $('#app').dataset.detent = detent;
+    $('#app').style.setProperty('--map-bottom', `${detent === 'full' ? sheetStops().peek : height}px`);
+    renderSheet();
+  }});
   await refresh();
+  sheet.snap('peek', false);
   if (!map) {
     $('#map-status').hidden = false; $('#map-status').textContent = '正在载入地图…';
     try {
       const A = await loadMap(boot.map);
-      // Interim wiring until the redesigned sheet lands (plan Tasks 5-7): a picked city opens its people.
-      const peopleAt = (key, level) => state.members.filter(member => member.location && (member.location.country_code === 'CHN') === (level === 'china') && memberKey(member.location, level) === key);
-      if (!map) map = new ClassMap(A, 'map', {divisions: chinaDivisions(A), onPick: (key, level) => run(() => {
-        const people = peopleAt(key, level);
-        return people.length === 1 ? memberDialog(people[0].id) : markerPeopleDialog(people);
-      })});
-      $('#map-status').hidden = true; render();
+      map ||= new ClassMap(A, 'map', {divisions: chinaDivisions(A), onPick: openRegion, onClusterPick: () => {}});
+      $('#map-status').hidden = true;
+      render();
+      map.fit();
     } catch (error) {$('#map-status').textContent = error.message;}
   }
 }
+// Sheet stops: peek ends just under the legend; half is ~55% of the screen.
+function sheetStops() {
+  const sheetTop = $('#sheet').getBoundingClientRect().top;
+  const peek = state.view.type === 'home' ? Math.round($('#peek-end').getBoundingClientRect().top - sheetTop + 12) : 260;
+  const full = $('#sheet').offsetHeight;
+  // On short phones the peek is already ~half the screen; keep half clearly between the two.
+  return {peek, half: Math.min(full - 80, Math.max(Math.round(innerHeight * 0.55), peek + 160)), full};
+}
 async function refresh() {
   const request = ++snapshotRequest;
-  const result = await api(`snapshot?at=${encodeURIComponent(state.at)}`);
+  const result = await api('snapshot');
   if (request !== snapshotRequest) return;
   state.members = orderMembers(result.members);
-  state.timelineStart = result.timeline_start || state.boot.today;
+  const confirmed = state.members.map(member => member.location?.confirmed_at).filter(Boolean).sort();
+  state.earliest = confirmed[0]?.slice(0, 10) || state.boot.today;
+  if (!state.range) {
+    state.range = presetRange('3y', state.boot.today, state.earliest);
+    rangeControl = mountRange($('#range'), {today: state.boot.today, earliest: state.earliest, range: state.range, preset: state.preset,
+      onChange: (range, preset) => {state.range = range; state.preset = preset; render();}});
+  }
   render();
 }
-function setLevel(level, province = '') {
-  Object.assign(state, {level, province, selected: '', selectedName: '', unknown: false});
-  $('#province-view').value = province; render();
+function setScope(scope) {
+  state.scope = scope; state.view = {type: 'home'};
+  render(); sheet.snap('peek'); map?.fit();
 }
-function pickRegion(key, name = '') {
-  state.unknown = false;
-  if (state.level === 'world' && key === 'CHN') setLevel('china');
-  else if (state.level === 'china' && state.boot.provinces[key]) setLevel('province', key);
-  else {state.selected = key; state.selectedName = name; render();}
+function openRegion(key, level) {
+  state.view = {type: 'region', key, level};
+  render(); sheet.snap('half');
+  map?.focus(key);  // after the snap, so the dot lands in the middle of the visible map
+}
+function goHome() {
+  footprintMap?.destroy(); footprintMap = null;
+  state.view = {type: 'home'};
+  render(); sheet.snap('peek');
+}
+function regionName(key, level) {
+  const loc = state.members.find(member => member.location && (member.location.country_code === 'CHN') === (level === 'china') && memberKey(member.location, level) === key)?.location;
+  return placeOf(loc) || key;
 }
 function render() {
-  const located = state.members.filter(member => member.location);
-  const countries = new Set(located.map(member => member.location.country_code));
-  const cities = new Set(located.map(member => `${member.location.country_code}:${member.location.city_code || member.location.city_name || member.location.province_code}`));
-  $('#overview').innerHTML = `<div><strong>${state.members.length}</strong><span>位同学</span></div><div><strong>${countries.size}</strong><span>个国家</span></div><div><strong>${cities.size}</strong><span>处落脚地</span></div>`;
-  $('#date-label').textContent = state.at === state.boot.today ? '现在的我们' : '那时的我们';
-  $('.live-dot').classList.toggle('history', state.at !== state.boot.today);
-  $('#snapshot-date').value = state.at;
-  document.querySelectorAll('[data-level]').forEach(button => {button.classList.toggle('active', button.dataset.level === state.level); button.setAttribute('aria-pressed', String(button.dataset.level === state.level));});
-  const scopeName = state.level === 'world' ? '世界' : state.level === 'china' ? '中国' : state.boot.provinces[state.province];
-  const regionName = state.selectedName || (state.level === 'world' ? state.boot.countries[state.selected] : '') || scopeName;
-  $('#directory-title').textContent = state.unknown ? '还没留下坐标的同学' : `在${regionName}的同学`;
-  $('#breadcrumbs').innerHTML = `<button data-nav="world">世界</button>${state.level !== 'world' ? '<span>/</span><button data-nav="china">中国</button>' : ''}${state.level === 'province' ? `<span>/</span><strong>${escape(scopeName)}</strong>` : ''}${state.selected ? `<span>/</span><strong>${escape(regionName)}</strong>` : ''}`;
-  $('#breadcrumbs').querySelectorAll('button').forEach(button => button.onclick = () => setLevel(button.dataset.nav));
-  const counts = regionCounts(state.members, state);
-  let regions = state.level === 'china' ? Object.entries(state.boot.provinces) : [...counts.keys()].map(key => [key, state.level === 'world' ? state.boot.countries[key] : state.members.find(member => member.location?.city_code === key)?.location.city_name || '城市未填写']);
-  regions.sort((a, b) => (counts.get(b[0]) || 0) - (counts.get(a[0]) || 0) || a[1].localeCompare(b[1], 'zh-CN'));
-  $('#region-list').innerHTML = regions.map(([key, name]) => `<button class="region ${state.selected === key ? 'selected' : ''}" data-region="${escape(key)}" data-name="${escape(name)}"><span>${escape(name)}</span><b>${counts.get(key) || 0}</b></button>`).join('') || '<p class="empty-small">这个区域还没有位置记录。</p>';
-  $('#region-list').querySelectorAll('button').forEach(button => button.onclick = () => pickRegion(button.dataset.region, button.dataset.name));
-  const members = scopeMembers(state.members, state);
-  $('#member-count').textContent = `${members.length} 位同学${state.at !== state.boot.today ? ' · 历史位置' : ''}`;
-  $('#unknown-button').textContent = `未填位置 ${state.members.length - located.length}`;
-  $('#unknown-button').classList.toggle('selected', state.unknown);
-  $('#member-list').innerHTML = members.map(member => `<button class="member-card" data-member="${member.id}"><span class="avatar tone-${member.id % 4}">${escape(member.name.slice(0, 1))}</span><span class="member-info"><span class="member-name">${escape(member.name)}${state.boot.me?.id === member.id ? '<small>我</small>' : ''}</span><span class="member-place">${escape(placeName(member.location))}</span><span class="member-note">${escape(member.location?.note || member.bio || '下次见面，一起吃饭。')}</span></span><span class="chevron" aria-hidden="true">›</span></button>`).join('') || '<div class="empty"><span>⌂</span><p>这里暂时还没有同学</p><small>换个地区或日期再看看。</small></div>';
-  $('#member-list').querySelectorAll('button').forEach(button => button.onclick = () => run(() => memberDialog(Number(button.dataset.member))));
-  const min = dayNumber(state.timelineStart), max = dayNumber(state.boot.today);
-  $('#timeline').min = Math.min(min, dayNumber(state.at)); $('#timeline').max = max; $('#timeline').value = dayNumber(state.at); $('#timeline').disabled = min === max;
-  $('#timeline-caption').textContent = `${state.timelineStart} 起的班级足迹`; $('#timeline-date').textContent = state.at;
-  map?.setLevel(state.level === 'world' ? 'world' : 'china');
-  map?.update(state.members, presetRange('all', state.boot.today, state.timelineStart || state.boot.today));
+  const counts = consistentCounts(state.members, state.range);
+  $('#count-china').textContent = counts.china; $('#count-world').textContent = counts.world;
+  document.querySelectorAll('[data-scope]').forEach(button => {button.classList.toggle('on', button.dataset.scope === state.scope); button.setAttribute('aria-pressed', String(button.dataset.scope === state.scope));});
+  const me = state.boot.me && state.members.find(member => member.id === state.boot.me.id);
+  $('#me-btn .dot').hidden = !state.boot.me || !isStale(me?.location?.confirmed_at, state.boot.today);
+  map?.setLevel(state.scope);
+  map?.update(state.members, state.range);
+  map?.select(state.view.type === 'region' ? state.view.key : null);
+  const to = state.range.to === null ? '今天' : monthLabel(state.range.to);
+  $('#range-chip').innerHTML = `确认时间 ${monthLabel(state.range.from)} – ${to}<u>修改</u>`;
+  $('#range-chip').hidden = state.view.type === 'home';
+  renderSheet();
 }
-function markerPeopleDialog(people) {
-  openModal(`附近的 ${people.length} 位同学`, `<p class="muted">放大地图可展开附近点位。</p><div class="simple-list">${people.map(person => `<button data-id="${person.id}">${escape(person.name)} <span>查看足迹 →</span></button>`).join('')}</div>`);
-  $('#modal-body').querySelectorAll('button').forEach(button => button.onclick = () => run(() => memberDialog(Number(button.dataset.id))));
+const rows = (list, options) => list.map(member => memberRow(member, state.range, options)).join('');
+const moreRow = (text, note) => `<button type="button" class="more" data-more>${text}<span>${note}</span></button>`;
+function renderSheet() {
+  if (state.view.type === 'member') return;
+  const home = state.view.type === 'home', full = sheet?.detent === 'full';
+  $('#range').hidden = !home; $('#legend').hidden = !home; $('#region-close').hidden = home; $('#account').hidden = !home;
+  const counts = consistentCounts(state.members, state.range);
+  let html;
+  if (home) {
+    $('#sheet-title').textContent = `${counts.total} 位同学`;
+    $('#sheet-summary').textContent = summaryLine(state.members.length);
+    if (!counts.total) html = '<div id="empty" class="empty"><p>这个时间段还没有同学确认过位置</p><button id="expand-range" class="secondary" type="button">扩大时间范围</button></div>';
+    else if (state.scope === 'world') html = countryGroups(full);
+    else {
+      const {inRange: fresh, others} = splitForRegion(state.members, null, 'china', state.range);
+      html = full ? section(sectionTitle(true), fresh.length) + rows(fresh, {showPlace: true}) + (others.length ? section(sectionTitle(false), others.length, '可能已经搬走了') + rows(others, {showPlace: true}) : '')
+        : section('最近更新', fresh.length) + rows(fresh.slice(0, 3), {showPlace: true}) + (fresh.length > 3 || others.length ? moreRow('展开全部', `还有 ${Math.max(0, fresh.length - 3)} 人`) : '');
+    }
+  } else {
+    const {key, level} = state.view;
+    const name = regionName(key, level);
+    const {inRange: fresh, others} = splitForRegion(state.members, key, level, state.range);
+    $('#sheet-title').textContent = regionTitle(name, fresh.length);
+    $('#sheet-summary').textContent = '这段时间确认过位置';
+    const toToday = state.range.to === null;
+    const otherNote = `另有 ${others.length} 条${toToday ? '更早的记录' : '不在这段时间里的记录'}`;
+    html = full ? section(sectionTitle(true), fresh.length) + rows(fresh) + (others.length ? section(toToday ? sectionTitle(false) : '其他记录', others.length, toToday ? `可能已经不在${escape(name)}` : '不在这段时间里') + rows(others) : '')
+      : rows(fresh.slice(0, 3)) + (fresh.length > 3 || others.length ? moreRow('展开全部', `还有 ${Math.max(0, fresh.length - 3)} 人，${otherNote}`) : '');
+  }
+  $('#list').innerHTML = html;
+}
+function countryGroups(full) {
+  const groups = new Map();
+  for (const member of splitForRegion(state.members, null, 'world', state.range).inRange) {
+    if (member.location.country_code === 'CHN') continue;
+    const name = placeOf(member.location);
+    groups.set(name, [...(groups.get(name) || []), member]);
+  }
+  return [...groups].map(([name, list]) => section(escape(name), list.length) + rows(full ? list : list.slice(0, 3))).join('');
 }
 function authDialog(mode, draft = entry, useCode = !draft.name && !!draft.student_code) {
   const claim = mode === 'claim';
@@ -170,25 +216,40 @@ function passwordDialog() {
   openModal('修改个人密码', `<form id="password-form"><label>原密码<input type="password" name="old_password" autocomplete="current-password" required></label><label>新密码${state.boot.is_admin ? '（至少 10 位）' : ''}<input type="password" name="password" autocomplete="new-password" ${state.boot.is_admin ? 'minlength="10"' : ''} maxlength="200" required></label><button class="primary" type="submit">保存新密码</button></form>`);
   bindForm('#password-form', async data => {await api('password', 'POST', data); closeModal(); notify('个人密码已更新，其他设备需要重新登录。');});
 }
+// Member detail lives in the sheet (full height) instead of a modal.
 async function memberDialog(id) {
+  closeModal();
   const detail = await api(`members/${id}`), member = detail.member;
   const chronological = detail.locations;
-  openModal(`${member.name}的足迹`, `<div class="profile-summary"><span class="avatar large tone-${member.id % 4}">${escape(member.name.slice(0, 1))}</span><div><h3>${escape(member.name)}</h3><p>${escape(member.bio || '下次路过，记得约一顿饭。')}</p><small>${detail.locations.length} 段足迹</small></div></div>
-    ${detail.editable ? '<div class="actions"><button id="add-location" class="primary">＋ 更新位置 / 补录历史</button><button id="edit-profile">编辑资料</button></div>' : ''}
-    <div id="footprint-map" class="mini-map"><p class="map-inline-status">正在加载足迹地图…</p></div><p class="muted small">编号按时间排序；连线表示足迹顺序，不代表实际行程。没有坐标的记录仍显示在下方。</p>
-    <div class="footprint-list">${[...chronological].reverse().map((loc, i) => `<article class="footprint"><span class="step">${chronological.length - i}</span><div><h3>${escape(placeName(loc))}</h3><div class="stay-date">${loc.started_on} → ${loc.ended_on || '至今'}${loc.ended_on ? '（离开当天起不计入）' : ''}</div><p>${escape(loc.note)}</p><small>资料更新于 ${escape(new Date(loc.updated_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}))}</small>${detail.editable ? `<div class="record-actions"><button class="text-button" data-edit="${loc.id}">编辑</button><button class="text-button danger" data-delete="${loc.id}">删除</button></div>` : ''}</div></article>`).join('') || '<p class="empty-small">还没有足迹，留下第一个坐标吧。</p>'}</div>`, true);
-  const generation = modalGeneration;
+  const back = state.view.type === 'member' ? state.view.back : state.view;
+  state.view = {type: 'member', id, back};
+  footprintMap?.destroy(); footprintMap = null;
+  $('#range').hidden = true; $('#legend').hidden = true; $('#region-close').hidden = false; $('#account').hidden = true;
+  $('#sheet-title').textContent = member.name;
+  $('#sheet-summary').textContent = member.bio || '下次路过，记得约一顿饭。';
+  $('#list').innerHTML = `<div id="member-detail"><h2 class="sec">足迹 · ${chronological.length} 段</h2>
+    ${detail.editable ? '<div class="actions"><button id="add-location" class="text-button" type="button">＋ 更新位置 / 补录历史</button><button id="edit-profile" class="text-button" type="button">编辑资料</button></div>' : ''}
+    <div id="footprint-map" class="mini-map"><p class="map-inline-status">正在加载足迹地图…</p></div><p class="muted small">编号按时间排序；连线表示足迹顺序，不代表实际行程。</p>
+    <div class="footprint-list">${[...chronological].reverse().map((loc, i) => `<article class="footprint"><span class="step">${chronological.length - i}</span><div><h3>${escape(placeName(loc))}</h3><div class="stay-date">${loc.started_on} → ${loc.ended_on || '至今'}</div>${loc.note ? `<p class="member-note">${escape(loc.note)}</p>` : ''}${detail.editable ? `<div class="record-actions"><button class="text-button" type="button" data-edit="${loc.id}">编辑</button><button class="text-button danger" type="button" data-delete="${loc.id}">删除</button></div>` : ''}</div></article>`).join('') || '<p class="empty-small">还没有留下足迹。</p>'}</div></div>`;
+  sheet.snap('full');
   $('#add-location')?.addEventListener('click', () => locationDialog(member));
   $('#edit-profile')?.addEventListener('click', () => profileDialog(member));
-  $('#modal-body').querySelectorAll('[data-edit]').forEach(button => button.onclick = () => locationDialog(member, detail.locations.find(loc => loc.id === Number(button.dataset.edit))));
-  $('#modal-body').querySelectorAll('[data-delete]').forEach(button => button.onclick = () => {
+  $('#list').querySelectorAll('[data-edit]').forEach(button => button.onclick = () => locationDialog(member, detail.locations.find(loc => loc.id === Number(button.dataset.edit))));
+  $('#list').querySelectorAll('[data-delete]').forEach(button => button.onclick = () => {
     const loc = detail.locations.find(loc => loc.id === Number(button.dataset.delete));
-    openModal('删除这段足迹？', `<p>${escape(placeName(loc))} · ${loc.started_on}</p><p class="muted">这段记录会从当前与历史地图中移除。其他记录的日期不会自动延长。</p><div class="actions"><button id="delete-confirm" class="danger-button">确认删除</button><button id="delete-cancel">取消</button></div>`);
-    $('#delete-cancel').onclick = () => run(() => memberDialog(id));
+    openModal('删除这段足迹？', `<p>${escape(placeName(loc))} · ${loc.started_on}</p><p class="muted">这段记录会从地图中移除。其他记录的日期不会自动延长。</p><div class="actions"><button id="delete-confirm" class="danger-button" type="button">确认删除</button><button id="delete-cancel" class="text-button" type="button">取消</button></div>`);
+    $('#delete-cancel').onclick = closeModal;
     $('#delete-confirm').onclick = () => run(async () => {await api(`members/${id}/locations/${loc.id}`, 'DELETE', {version: loc.version}); await refresh(); await memberDialog(id); notify('足迹已删除');});
   });
-  try {const A = await loadMap(state.boot.map); if (generation === modalGeneration && $('#modal').open) modalMap = createFootprintMap(A, 'footprint-map', chronological);}
-  catch (error) {if (generation === modalGeneration) $('#footprint-map').textContent = error.message;}
+  try {
+    const A = await loadMap(state.boot.map);
+    if (state.view.type === 'member' && state.view.id === id) footprintMap = createFootprintMap(A, 'footprint-map', chronological);
+  } catch (error) {if (state.view.id === id) $('#footprint-map').textContent = error.message;}
+}
+function leaveMember() {
+  footprintMap?.destroy(); footprintMap = null;
+  state.view = state.view.back || {type: 'home'};
+  render(); sheet.snap(state.view.type === 'home' ? 'peek' : 'half');
 }
 function profileDialog(member) {
   openModal('编辑我的资料', `<form id="profile-form"><label>姓名 / 昵称<input name="name" maxlength="60" value="${escape(member.name)}" required></label><p class="muted">修改后请使用新的姓名登录。</p><label>一句近况<textarea name="bio" maxlength="240">${escape(member.bio)}</textarea></label><button type="submit" class="primary">保存资料</button></form>`);
@@ -373,14 +434,16 @@ $('#modal-close').onclick = closeModal;
 $('#modal').addEventListener('cancel', () => {modalMap?.destroy(); modalMap = null; modalGeneration++;});
 $('#gate-login').onclick = () => authDialog('login');
 bindForm('#unlock-form', async data => {await api('unlock', 'POST', data); await boot();});
-document.querySelectorAll('[data-level]').forEach(button => button.onclick = () => setLevel(button.dataset.level));
-$('#province-view').onchange = () => {if ($('#province-view').value) setLevel('province', $('#province-view').value);};
-$('#search').oninput = () => {state.search = $('#search').value; render();};
-$('#clear-filter').onclick = () => {state.selected = ''; state.selectedName = ''; state.unknown = false; state.search = ''; $('#search').value = ''; render();};
-$('#unknown-button').onclick = () => {state.unknown = !state.unknown; state.selected = ''; render();};
-$('#snapshot-date').onchange = () => run(async () => {if (!$('#snapshot-date').value) return; state.at = $('#snapshot-date').value; await refresh();});
-$('#today-button').onclick = () => run(async () => {state.at = state.boot.today; await refresh();});
-$('#timeline').oninput = () => {$('#timeline-date').textContent = dayString(Number($('#timeline').value));};
-$('#timeline').onchange = () => run(async () => {state.at = dayString(Number($('#timeline').value)); await refresh();});
-$('#map-reset').onclick = () => map?.reset();
+document.querySelectorAll('[data-scope]').forEach(button => button.onclick = () => setScope(button.dataset.scope));
+// A date picker opened from the peeking sheet would fall off the bottom of the screen.
+$('#range').addEventListener('click', event => {if (event.target.closest('[data-end]') && sheet.detent !== 'full') sheet.snap('full');}, true);
+$('#region-close').onclick = () => state.view.type === 'member' ? leaveMember() : goHome();
+$('#range-chip').onclick = () => {goHome(); $('#range').scrollIntoView({block: 'nearest'});};
+$('#me-btn').onclick = () => state.boot.me ? run(() => memberDialog(state.boot.me.id)) : authDialog('login');
+$('#list').addEventListener('click', event => {
+  const row = event.target.closest('[data-member]');
+  if (row) {run(() => memberDialog(Number(row.dataset.member))); return;}
+  if (event.target.closest('[data-more]')) sheet.snap('full');
+  if (event.target.closest('#expand-range')) rangeControl.set(presetRange('all', state.boot.today, state.earliest), 'all');
+});
 run(boot);

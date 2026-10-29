@@ -41,6 +41,8 @@ export function loadMap(config) {
 
 const RAMP = ['#d4ccff', '#a898ff', '#7a63ff', '#4b3bea'];
 const MIN_GAP = 8;  // px between count dots before they merge (spec 5.1)
+const PROVINCE_NUDGE = [0.35, -0.3];  // degrees, for province-only dots
+const WORLD_SPAN = 60;  // degrees of longitude a zoom-3 phone screen can roughly show
 const escapeHTML = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const shortName = name => String(name || '').replace(/(特别行政区|维吾尔自治区|壮族自治区|回族自治区|自治区|自治州|地区|盟|省|市)$/, '');
 
@@ -124,7 +126,10 @@ export class ClassMap {
     if (this.level === 'world') return {position: position || countryCenters[key], label: loc.country_name || key};
     if (key.startsWith('prov:')) {
       const province = this.divisions?.provinces.get(loc.province_code);
-      return (position || province) && {position: position || province.center, label: `${shortName(province?.name || loc.province_name)} · 未填城市`};
+      // The provider's province centre is the capital; nudge the dot so it never sits
+      // exactly on the capital's own dot and can split from it when zoomed in.
+      const fallback = province?.center && [province.center[0] + PROVINCE_NUDGE[0], province.center[1] + PROVINCE_NUDGE[1]];
+      return (position || fallback) && {position: position || fallback, label: `${shortName(province?.name || loc.province_name)} · 未填城市`};
     }
     const city = this.divisions?.cities.get(key);
     position = position || city?.center;
@@ -159,16 +164,32 @@ export class ClassMap {
       this.map.setFitView(members.map(point => new this.A.Marker({position: point.position})), false, this.padding(), 12);
       this.onClusterPick(members.map(point => point.key));
     });
-    return new this.A.Marker({position, content, offset: new this.A.Pixel(-size / 2, -size / 2), zIndex: selected ? 130 : 120, bubble: false});
+    const marker = new this.A.Marker({position, content, offset: new this.A.Pixel(-size / 2, -size / 2), zIndex: selected ? 130 : 120, bubble: false});
+    marker.count = n; marker.spot = position;  // own fields: the SDK's marker.position is not public API
+    return marker;
   }
   select(key) {
     this.selected = key;
     this.renderMarkers();
   }
+  focus(key) {
+    const point = this.points().find(candidate => candidate.key === key);
+    if (point) this.map.setCenter(point.position);
+  }
   setBottomInset(px) {this.inset = px;}
-  padding() {return [110, 40, this.inset + 20, 40];}
+  // AMap 1.4 setFitView margins are [top, bottom, left, right] (not CSS order).
+  padding() {return [110, this.inset + 20, 40, 40];}
   fit() {
-    if (this.markers.length) this.map.setFitView(this.markers, false, this.padding(), 9);
+    if (!this.markers.length) return;
+    // AMap 1.4 cannot zoom out past 3, so continents apart do not fit one phone screen;
+    // centring on their midpoint would show neither. Centre on the biggest group instead.
+    const lngs = this.markers.map(marker => marker.spot[0]);
+    if (this.level === 'world' && Math.max(...lngs) - Math.min(...lngs) > WORLD_SPAN) {
+      const biggest = this.markers.reduce((best, marker) => marker.count > best.count ? marker : best);
+      this.map.setZoomAndCenter(3, biggest.spot);
+      return;
+    }
+    this.map.setFitView(this.markers, false, this.padding(), 9);
   }
   destroy() {
     for (const event of markerEvents) this.map.off(event, this.refreshMarkers);

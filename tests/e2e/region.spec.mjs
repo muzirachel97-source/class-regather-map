@@ -1,0 +1,58 @@
+import {test, expect} from '@playwright/test';
+import {dragSheet, openWuhan, unlock} from './helpers.mjs';
+
+const months = page => page.locator('#sheet-body .mem:not(.old) .tag').evaluateAll(tags => tags.map(t => t.textContent.match(/\d{4}\.\d{2}/)?.[0]));
+
+test('home sheet lists recent updates newest first', async ({page}) => {
+  await unlock(page);
+  await dragSheet(page, -220);
+  const seen = (await months(page)).slice(0, 3);
+  expect(seen.length).toBe(3);
+  expect([...seen].sort().reverse()).toEqual(seen);
+});
+
+test('city half sheet shows top 3 and an expand row; the dot is selected in place', async ({page}) => {
+  await unlock(page);
+  await openWuhan(page);
+  await expect(page.locator('#sheet-title')).toHaveText(/^武汉 · \d+ 人$/);
+  await expect(page.locator('#sheet-body .mem')).toHaveCount(3);
+  await expect(page.locator('#sheet-body .more')).toContainText('展开全部');
+  const sel = page.locator('.pt.sel .d');
+  await expect(sel).toBeVisible();
+  const box = await sel.boundingBox();
+  const width = await sel.evaluate(el => el.offsetWidth);
+  expect(box.width).toBeGreaterThanOrEqual(width * 1.4);
+  await expect(sel).toHaveCSS('outline-style', 'none');
+  await expect(page.locator('#range-chip')).toBeVisible();
+});
+
+test('expand shows both groups, with the older records greyed', async ({page}) => {
+  await unlock(page);
+  await openWuhan(page);
+  await page.locator('#sheet-body .more').click();
+  await expect(page.locator('#sheet')).toHaveAttribute('data-detent', 'full');
+  await expect(page.locator('#sheet-body .sec').first()).toContainText('这段时间确认过');
+  await expect(page.locator('#sheet-body .sec').nth(1)).toContainText('更早的记录');
+  await expect(page.locator('#sheet-body .mem.old').first()).toContainText('年的信息');
+});
+
+test('overseas scope keeps the range and groups by country', async ({page}) => {
+  await unlock(page);
+  await page.locator('#range [data-preset="all"]').click();
+  await page.locator('#scope-seg [data-scope="world"]').click();
+  await expect(page.locator('#range [data-preset="all"]')).toHaveClass(/\bon\b/);
+  await dragSheet(page, -220);
+  await expect(page.locator('#count-world')).toHaveText('3');
+  await expect(page.locator('#sheet-body .sec')).toHaveCount(3);
+  await expect(page.locator('#sheet-body .sec').first()).toContainText(/新加坡|日本|美国/);
+  // Continents apart cannot share one zoom-3 phone screen; at least one country dot is in view.
+  await expect(page.locator('.pt').first()).toBeVisible();
+});
+
+test('a row opens the member detail with the footprint map', async ({page}) => {
+  await unlock(page);
+  await openWuhan(page);
+  await page.locator('#sheet-body .mem').first().click();
+  await expect(page.locator('#member-detail h2')).toBeVisible();
+  await expect(page.locator('#footprint-map')).toBeVisible();
+});

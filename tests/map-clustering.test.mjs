@@ -64,7 +64,10 @@ test('province-only people get their own labelled point', () => withDocument(() 
   const map = new ClassMap(stubSDK(), 'map', {divisions});
   map.map.scale = 1000;
   map.update(people, range);
-  assert.ok(map.markers.some(marker => labelOf(marker) === '湖北 · 未填城市'));
+  const province = map.markers.find(marker => labelOf(marker) === '湖北 · 未填城市');
+  assert.ok(province);
+  assert.notDeepEqual([...province.position], [...map.markers.find(marker => labelOf(marker) === '武汉').position],
+    'the province-only dot must not sit exactly on the capital');
 }));
 
 test('close cities merge into a cluster that splits when zoomed in', () => withDocument(() => {
@@ -116,8 +119,28 @@ test('fit leaves room for the bottom sheet and destroy unhooks events', () => wi
   map.update(people, range);
   map.setBottomInset(300);
   map.fit();
-  assert.equal(map.map.fits.at(-1).padding[2], 320);
+  assert.equal(map.map.fits.at(-1).padding[1], 320);  // AMap order: top, bottom, left, right
   map.destroy();
   assert.equal(map.map.destroyed, true);
   assert.equal(map.map.events.zoomend, undefined);
+}));
+
+test('a world view too wide for one screen centres on the biggest country instead of the midpoint', () => withDocument(() => {
+  const sdk = stubSDK();
+  const map = new ClassMap(sdk, 'map', {divisions});
+  map.map.setZoomAndCenter = (zoom, center) => {map.map.centred = {zoom, center};};
+  map.setLevel('world');
+  const abroad = (id, code, lng, lat) => ({id, name: code, location: {country_code: code, country_name: code, province_code: '', city_code: '', confirmed_at: at, longitude: String(lng), latitude: String(lat)}});
+  map.update([abroad(1, 'USA', -74, 40.7), abroad(2, 'SGP', 103.8, 1.35), abroad(3, 'SGP', 103.8, 1.35)], range);
+  map.fit();
+  assert.deepEqual(map.map.centred, {zoom: 3, center: [103.8, 1.35]});
+}));
+
+test('focus centres the map on a city dot', () => withDocument(() => {
+  const map = new ClassMap(stubSDK(), 'map', {divisions});
+  map.map.scale = 1000;
+  map.map.setCenter = center => {map.map.centre = center;};
+  map.update(people, range);
+  map.focus('420100');
+  assert.deepEqual(map.map.centre, [114.3, 30.6]);
 }));
