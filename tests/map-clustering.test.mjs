@@ -14,7 +14,7 @@ function stubSDK() {
     add(items) {this.added.push(...[].concat(items));}
     remove(items) {const gone = new Set([].concat(items)); this.added = this.added.filter(item => !gone.has(item));}
     setZoomAndCenter() {}
-    setFitView(markers, immediately, padding) {this.fits.push({markers, padding});}
+    setFitView(markers, immediately, padding, maxZoom) {this.fits.push({markers, padding, maxZoom});}
     lngLatToContainer([lng, lat]) {return {x: lng * this.scale, y: -lat * this.scale};}
     destroy() {this.destroyed = true;}
   }
@@ -89,6 +89,7 @@ test('clicking a city picks it; clicking a cluster zooms to its points', () => w
   map.markers.find(marker => marker.content.className.includes('cl')).content.onclick({stopPropagation() {}});
   assert.equal(clusters.length, 1);
   assert.equal(map.map.fits.length, 1);
+  assert.ok(map.map.fits[0].maxZoom <= 9, 'a cluster tap zooms to city level, not street level');
   map.map.scale = 1000; map.map.events.zoomend();
   map.markers.find(marker => labelOf(marker) === '武汉').content.onclick({stopPropagation() {}});
   assert.deepEqual(picks, [['420100', 'china']]);

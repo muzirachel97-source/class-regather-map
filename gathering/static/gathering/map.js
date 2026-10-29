@@ -161,7 +161,7 @@ export class ClassMap {
     content.addEventListener('click', event => {
       event.stopPropagation();
       if (!merged) {this.onPick(members[0].key, this.level); return;}
-      this.map.setFitView(members.map(point => new this.A.Marker({position: point.position})), false, this.padding(), 12);
+      this.map.setFitView(members.map(point => new this.A.Marker({position: point.position})), false, this.padding(), 8);  // city level, not street level
       this.onClusterPick(members.map(point => point.key));
     });
     const marker = new this.A.Marker({position, content, offset: new this.A.Pixel(-size / 2, -size / 2), zIndex: selected ? 130 : 120, bubble: false});

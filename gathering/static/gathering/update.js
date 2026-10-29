@@ -102,6 +102,12 @@ export function renderUpdate(root, ctx) {
         await onDone();
       }, '正在保存…', () => {error.textContent = '没保存成功，内容已保留。可以再点一次保存重试。';});
     };
+    // With the keyboard up the sheet is short: lift the field to the top so its suggestions
+    // sit between it and the save bar instead of underneath the bar.
+    const lift = () => {if (input.isConnected && document.activeElement === input) input.closest('label').scrollIntoView({block: 'start'});};
+    input.addEventListener('input', lift);
+    input.addEventListener('focus', lift);
+    for (const target of [window, window.visualViewport].filter(Boolean)) target.addEventListener('resize', () => requestAnimationFrame(lift));
     input.focus();
   }
 
