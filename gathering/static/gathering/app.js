@@ -1,5 +1,6 @@
 import {cityKey, createMemberOrder, dayNumber, dayString, municipalities, placeName, regionCounts, scopeMembers} from './logic.js';
-import {ClassMap, createFootprintMap, districtChildren, loadMap} from './map.js';
+import {ClassMap, chinaDivisions, createFootprintMap, districtChildren, loadMap} from './map.js';
+import {memberKey, presetRange} from './filter.js';
 import {buildEntryLink, readEntryLink} from './links.js';
 
 const $ = selector => document.querySelector(selector);
@@ -77,7 +78,12 @@ async function boot() {
     $('#map-status').hidden = false; $('#map-status').textContent = '正在载入地图…';
     try {
       const A = await loadMap(boot.map);
-      if (!map) map = new ClassMap(A, 'map', pickRegion, people => run(() => people.length === 1 ? memberDialog(people[0].id) : markerPeopleDialog(people)));
+      // Interim wiring until the redesigned sheet lands (plan Tasks 5-7): a picked city opens its people.
+      const peopleAt = (key, level) => state.members.filter(member => member.location && (member.location.country_code === 'CHN') === (level === 'china') && memberKey(member.location, level) === key);
+      if (!map) map = new ClassMap(A, 'map', {divisions: chinaDivisions(A), onPick: (key, level) => run(() => {
+        const people = peopleAt(key, level);
+        return people.length === 1 ? memberDialog(people[0].id) : markerPeopleDialog(people);
+      })});
       $('#map-status').hidden = true; render();
     } catch (error) {$('#map-status').textContent = error.message;}
   }
@@ -128,7 +134,8 @@ function render() {
   const min = dayNumber(state.timelineStart), max = dayNumber(state.boot.today);
   $('#timeline').min = Math.min(min, dayNumber(state.at)); $('#timeline').max = max; $('#timeline').value = dayNumber(state.at); $('#timeline').disabled = min === max;
   $('#timeline-caption').textContent = `${state.timelineStart} 起的班级足迹`; $('#timeline-date').textContent = state.at;
-  map?.update(state, state.members);
+  map?.setLevel(state.level === 'world' ? 'world' : 'china');
+  map?.update(state.members, presetRange('all', state.boot.today, state.timelineStart || state.boot.today));
 }
 function markerPeopleDialog(people) {
   openModal(`附近的 ${people.length} 位同学`, `<p class="muted">放大地图可展开附近点位。</p><div class="simple-list">${people.map(person => `<button data-id="${person.id}">${escape(person.name)} <span>查看足迹 →</span></button>`).join('')}</div>`);
