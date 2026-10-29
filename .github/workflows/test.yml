@@ -1,0 +1,54 @@
+name: tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  sqlite:
+    runs-on: ubuntu-latest
+    env:
+      DEBUG: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -r requirements.txt
+      - run: python manage.py collectstatic --noinput
+      - run: python manage.py check
+      - run: python manage.py makemigrations --check --dry-run
+      - run: python manage.py test tests
+      - run: npm run check && npm test
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-test-password
+          MYSQL_DATABASE: regather
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 --silent"
+          --health-interval=5s --health-timeout=5s --health-retries=30
+    env:
+      DEBUG: '1'
+      MYSQL_HOST: 127.0.0.1
+      MYSQL_PORT: '3306'
+      MYSQL_USER: root
+      MYSQL_DATABASE: regather
+      MYSQL_PASSWORD: ci-test-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python manage.py collectstatic --noinput
+      - run: python manage.py migrate --noinput
+      - run: python manage.py test tests

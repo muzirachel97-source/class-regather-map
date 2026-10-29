@@ -1,0 +1,61 @@
+# Host nginx example. Replace domain/certificate paths and JSCODE before use.
+# Keep the resulting file private; do not commit actual credentials.
+# app is bound to 127.0.0.1:8000 by compose.yaml.
+limit_req_zone $binary_remote_addr zone=map_api:10m rate=10r/s;
+server {
+    listen 80;
+    server_name class.example.com;
+    return 301 https://$host$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name class.example.com;
+    ssl_certificate /etc/letsencrypt/live/class.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/class.example.com/privkey.pem;
+    client_max_body_size 2m;
+
+    # Only predefined provider destinations; this is not an arbitrary URL proxy.
+    # Avoid logging provider query parameters or securityJsCode.
+    location /_AMapService/v4/map/styles {
+        limit_req zone=map_api burst=30 nodelay;
+        access_log off;
+        set $args "$args&jscode=REPLACE_WITH_YOUR_JSCODE";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Host webapi.amap.com;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_pass https://webapi.amap.com/v4/map/styles;
+    }
+    location /_AMapService/v3/vectormap {
+        limit_req zone=map_api burst=30 nodelay;
+        access_log off;
+        set $args "$args&jscode=REPLACE_WITH_YOUR_JSCODE";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Host fmap01.amap.com;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_pass https://fmap01.amap.com/v3/vectormap;
+    }
+    location /_AMapService/ {
+        limit_req zone=map_api burst=30 nodelay;
+        access_log off;
+        set $args "$args&jscode=REPLACE_WITH_YOUR_JSCODE";
+        proxy_set_header Cookie "";
+        proxy_set_header Authorization "";
+        proxy_set_header Host restapi.amap.com;
+        proxy_ssl_server_name on;
+        proxy_ssl_verify on;
+        proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;
+        proxy_pass https://restapi.amap.com/;
+    }
+    location / {
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_pass http://127.0.0.1:8000;
+    }
+}

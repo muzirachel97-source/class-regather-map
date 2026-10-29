@@ -1,0 +1,5 @@
+student_code,name,bio,country_code,province_code,city_code,city_name,label,longitude,latitude,coordinate_system,started_on,ended_on,note
+001,示例同学甲,演示数据,CHN,330000,330100,杭州市,,,,gcj02,2020-07-01,2022-06-01,毕业后的第一站
+001,示例同学甲,演示数据,CHN,310000,310000,上海市,,,,gcj02,2022-06-01,,在上海工作
+002,示例同学乙,演示数据,JPN,,,东京,,,,wgs84,2023-09-01,,周末可约
+003,示例同学丙,还没填写位置,,,,,,,,,,,

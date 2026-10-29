@@ -1,0 +1,10 @@
+{
+  "name": "class-regather-map",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check gathering/static/gathering/app.js && node --check gathering/static/gathering/map.js"
+  }
+}
