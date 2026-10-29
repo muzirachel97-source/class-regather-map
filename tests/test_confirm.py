@@ -129,7 +129,7 @@ class ConfirmTests(TestCase):
         self.assertEqual(after.started_on, loc.started_on)
         body = response.json()['location']
         self.assertEqual(body['version'], loc.updated_at.isoformat())
-        self.assertEqual(body['confirmed_at'], after.confirmed_at.isoformat())
+        self.assertEqual(body['confirmed_at'], timezone.localtime(after.confirmed_at).isoformat())
         self.assertTrue(AuditEvent.objects.filter(action='location.confirm', member=self.member,
                                                   detail__location_id=loc.pk).exists())
 
@@ -199,11 +199,13 @@ class ConfirmTests(TestCase):
         save_location(self.unclaimed, stay(), self.admin)
         self.auth()
         rows = {row['id']: row for row in self.client.get(self.base + 'snapshot').json()['members']}
-        self.assertEqual(rows[self.member.pk]['location']['confirmed_at'], mine.confirmed_at.isoformat())
+        # Local (+08:00) ISO so the browser can read the month straight from the string (filter.js).
+        self.assertEqual(rows[self.member.pk]['location']['confirmed_at'], timezone.localtime(mine.confirmed_at).isoformat())
+        self.assertTrue(rows[self.member.pk]['location']['confirmed_at'].endswith('+08:00'))
         self.assertIn('confirmed_at', rows[self.unclaimed.pk]['location'])
         self.assertIsNone(rows[self.unclaimed.pk]['location']['confirmed_at'])
         detail = self.client.get(self.base + f'members/{self.member.pk}').json()
-        self.assertEqual(detail['locations'][0]['confirmed_at'], mine.confirmed_at.isoformat())
+        self.assertEqual(detail['locations'][0]['confirmed_at'], timezone.localtime(mine.confirmed_at).isoformat())
 
     # --- migration backfill ---------------------------------------------
 

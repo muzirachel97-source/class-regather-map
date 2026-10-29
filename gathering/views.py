@@ -119,7 +119,7 @@ def location_json(location):
         'coordinate_system', 'started_on', 'ended_on', 'note')} | {
         'country_name': country_name(location.country_code), 'province_name': PROVINCES.get(location.province_code, ''),
         'updated_at': location.updated_at.isoformat(), 'version': location.updated_at.isoformat(),
-        'confirmed_at': location.confirmed_at.isoformat() if location.confirmed_at else None,
+        'confirmed_at': timezone.localtime(location.confirmed_at).isoformat() if location.confirmed_at else None,
     }
 
 
