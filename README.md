@@ -123,4 +123,4 @@ CI 分别测试 SQLite 和 MySQL 8.4。核心覆盖：班级隔离、所有写�
 
 ## 许可证
 
-本项目采用 [MIT License](LICENSE)，Copyright (c) 2026 samhjn。高德地图及其他第三方依赖、资源遵循各自的许可与服务条款。
+本项目采用 [MIT License](LICENSE)，Copyright (c) 2026 ShadowMov。高德地图及其他第三方依赖、资源遵循各自的许可与服务条款。
