@@ -3,7 +3,7 @@ import {ClassMap, chinaDivisions, createFootprintMap, loadMap} from './map.js';
 import {consistentCounts, inRange, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
 import {createSheet} from './sheet.js';
 import {monthLabel, mountRange} from './range.js';
-import {matches, memberRow, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
+import {matches, memberRow, otherGroup, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
 import {closeUpdate, placeSearch, renderUpdate} from './update.js';
 import {dayPicker} from './pickers.js';
 import {buildEntryLink, readEntryLink} from './links.js';
@@ -11,7 +11,7 @@ import {buildEntryLink, readEntryLink} from './links.js';
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const state = {scope: 'china', view: {type: 'home'}, search: '', range: null, preset: '3y', earliest: '', members: [], boot: null};
-let map, sheet, rangeControl, footprintMap, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
+let map, sheet, rangeControl, footprintMap, memberTicket = 0, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
 const apiRoot = new URL('api/', location.href);
 const orderMembers = createMemberOrder();
 const entryLink = readEntryLink(location.href);
@@ -125,15 +125,18 @@ async function refresh() {
   render();
 }
 function setScope(scope) {
+  closeUpdate();
   state.scope = scope; state.view = {type: 'home'};
   render(); sheet.snap('peek'); map?.fit();
 }
 function openRegion(key, level) {
+  closeUpdate();
   state.view = {type: 'region', key, level};
   render(); sheet.snap('half');
   map?.focus(key);  // after the snap, so the dot lands in the middle of the visible map
 }
 function goHome() {
+  closeUpdate();
   footprintMap?.destroy(); footprintMap = null;
   state.view = {type: 'home'};
   render(); sheet.snap('peek');
@@ -181,7 +184,8 @@ function renderSheet() {
     else {
       const {inRange: fresh, others} = splitForRegion(state.members, null, 'china', state.range);
       const unplaced = state.members.filter(member => !member.location);
-      html = full ? section(sectionTitle(true), fresh.length) + rows(fresh, {showPlace: true}) + (others.length ? section(sectionTitle(false), others.length, '可能已经搬走了') + rows(others, {showPlace: true}) : '')
+      const other = otherGroup(state.range.to === null);
+      html = full ? section(sectionTitle(true), fresh.length) + rows(fresh, {showPlace: true}) + (others.length ? section(other.title, others.length, other.note) + rows(others, {showPlace: true}) : '')
           + (unplaced.length ? section('还没填位置', unplaced.length) + rows(unplaced) : '')
         : section('最近更新', fresh.length) + rows(fresh.slice(0, 3), {showPlace: true}) + (fresh.length > 3 || others.length ? moreRow('展开全部', `还有 ${Math.max(0, fresh.length - 3)} 人`) : '');
     }
@@ -193,18 +197,24 @@ function renderSheet() {
     $('#sheet-summary').textContent = '这段时间确认过位置';
     const toToday = state.range.to === null;
     const otherNote = `另有 ${others.length} 条${toToday ? '更早的记录' : '不在这段时间里的记录'}`;
-    html = full ? section(sectionTitle(true), fresh.length) + rows(fresh) + (others.length ? section(toToday ? sectionTitle(false) : '其他记录', others.length, toToday ? `可能已经不在${escape(name)}` : '不在这段时间里') + rows(others) : '')
+    const other = otherGroup(toToday, escape(name));
+    html = full ? section(sectionTitle(true), fresh.length) + rows(fresh) + (others.length ? section(other.title, others.length, other.note) + rows(others) : '')
       : rows(fresh.slice(0, 3)) + (fresh.length > 3 || others.length ? moreRow('展开全部', `还有 ${Math.max(0, fresh.length - 3)} 人，${otherNote}`) : '');
   }
   $('#list').innerHTML = html;
 }
 function countryGroups(full) {
+  const {inRange: fresh, others} = splitForRegion(state.members, null, 'world', state.range);
   const groups = new Map();
-  for (const member of splitForRegion(state.members, null, 'world', state.range).inRange) {
+  for (const member of fresh) {
     const name = placeOf(member.location);
     groups.set(name, [...(groups.get(name) || []), member]);
   }
-  return [...groups].map(([name, list]) => section(escape(name), list.length) + rows(full ? list : list.slice(0, 3))).join('');
+  const other = otherGroup(state.range.to === null);
+  const truncated = [...groups.values()].some(list => list.length > 3);
+  return [...groups].map(([name, list]) => section(escape(name), list.length) + rows(full ? list : list.slice(0, 3))).join('')
+    + (full ? (others.length ? section(other.title, others.length, other.note) + rows(others, {showPlace: true}) : '')
+      : (truncated || others.length ? moreRow('展开全部', others.length ? `另有 ${others.length} 条${other.title}` : '') : ''));
 }
 function authDialog(mode, draft = entry, useCode = !draft.name && !!draft.student_code) {
   const claim = mode === 'claim';
@@ -237,8 +247,11 @@ function passwordDialog() {
 }
 // Member detail lives in the sheet (full height) instead of a modal.
 async function memberDialog(id) {
-  closeModal();
+  closeModal(); closeUpdate();
+  // A newer tap wins: an older request that lands late must not build a second footprint map.
+  const ticket = ++memberTicket;
   const detail = await api(`members/${id}`), member = detail.member;
+  if (ticket !== memberTicket) return;
   const chronological = detail.locations;
   const back = state.view.type === 'member' ? state.view.back : state.view;
   state.view = {type: 'member', id, back};
@@ -262,7 +275,7 @@ async function memberDialog(id) {
   });
   try {
     const A = await loadMap(state.boot.map);
-    if (state.view.type === 'member' && state.view.id === id) footprintMap = createFootprintMap(A, 'footprint-map', chronological);
+    if (ticket === memberTicket && state.view.type === 'member' && state.view.id === id) footprintMap = createFootprintMap(A, 'footprint-map', chronological);
   } catch (error) {if (state.view.id === id) $('#footprint-map').textContent = error.message;}
 }
 function openUpdate() {

@@ -189,3 +189,9 @@ test('the first view re-frames once district centres arrive, unless the user alr
     assert.equal(touched.map.fits.length, 0);
   });
 });
+
+test('the base map shows no place labels of its own, so our dot names are never doubled', () => withDocument(() => {
+  const map = new ClassMap(stubSDK(), 'map', {divisions});
+  assert.ok(Array.isArray(map.map.options.features));
+  assert.ok(!map.map.options.features.includes('point'));
+}));

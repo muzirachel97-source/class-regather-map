@@ -9,6 +9,10 @@ const CHEVRON = '<svg class="chev" width="8" height="14" viewBox="0 0 8 14" aria
 
 export const regionTitle = (name, n) => `${name} · ${n} 人`;
 export const sectionTitle = fresh => fresh ? '这段时间确认过' : '更早的记录';
+// Name of the second group on any list: "older" only when the range runs to today.
+export const otherGroup = (toToday, place = '') => toToday
+  ? {title: '更早的记录', note: place ? `可能已经不在${place}了` : '可能已经搬走了'}
+  : {title: '其他记录', note: '不在这段时间里'};
 export const summaryLine = total => `这段时间确认过位置 · 全班 ${total} 人`;
 
 export function placeOf(loc) {

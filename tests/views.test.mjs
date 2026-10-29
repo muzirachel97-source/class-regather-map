@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {memberRow, regionTitle, sectionTitle, summaryLine} from '../gathering/static/gathering/views.js';
+import {memberRow, otherGroup, regionTitle, sectionTitle, summaryLine} from '../gathering/static/gathering/views.js';
 import {monthIndex} from '../gathering/static/gathering/filter.js';
 
 const person = (confirmed, loc = {}) => ({id: 7, name: '林<小满>', bio: '', location: {country_code: 'CHN', country_name: '中国', province_code: '420000',
@@ -31,4 +31,10 @@ test('region and section copy follow the spec', () => {
 test('a member without a location says so instead of a confirm date', () => {
   const html = memberRow({id: 3, name: '夏禾', bio: '', location: null}, range, {showPlace: true});
   assert.match(html, /还没填位置/);
+});
+
+test('the second group is named for the chosen range, on every list', () => {
+  assert.deepEqual(otherGroup(true, '武汉'), {title: '更早的记录', note: '可能已经不在武汉了'});
+  assert.deepEqual(otherGroup(true), {title: '更早的记录', note: '可能已经搬走了'});
+  assert.deepEqual(otherGroup(false, '武汉'), {title: '其他记录', note: '不在这段时间里'});
 });

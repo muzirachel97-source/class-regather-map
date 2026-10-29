@@ -61,7 +61,8 @@ export class ClassMap {
     this.inset = 0;
     this.markers = [];
     this.map = new A.Map(element, {zoom: 4, center: [108, 33], viewMode: '3D', pitch: 0, resizeEnable: true,
-      showIndoorMap: false, isHotspot: false, mapStyle: 'amap://styles/whitesmoke'});
+      showIndoorMap: false, isHotspot: false, mapStyle: 'amap://styles/whitesmoke',
+      features: ['bg', 'road', 'building']});  // no provider place labels: our dots carry the names, never twice
     this.map.addControl(new A.Scale());
     this.setDivisions(divisions);
     this.map.on('dragstart', () => {this.userMoved = true;});

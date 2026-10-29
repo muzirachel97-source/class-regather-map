@@ -67,3 +67,35 @@ test('search finds anyone, including people with no location yet', async ({page}
   await dragSheet(page, -700);
   await expect(page.locator('#sheet-body .sec').last()).toContainText('还没填位置 · 1');
 });
+
+test('the overseas home list also shows overseas classmates confirmed before the range', async ({page}) => {
+  await unlock(page);
+  await page.locator('#scope-seg [data-scope="world"]').click();
+  await dragSheet(page, -700);
+  const inRange = await page.locator('#count-world').textContent();
+  const total = await page.evaluate(async () => (await (await fetch('api/snapshot', {credentials: 'same-origin'})).json())
+    .members.filter(m => m.location && m.location.country_code !== 'CHN').length);
+  expect(total).toBeGreaterThan(Number(inRange));  // the demo data has at least one older overseas stay
+  await expect(page.locator('#sheet-body .sec', {hasText: '更早的记录'})).toBeVisible();
+  await expect(page.locator('#sheet-body .mem')).toHaveCount(total);
+});
+
+test('tapping a row twice quickly builds only one footprint map', async ({page}) => {
+  await unlock(page);
+  await page.evaluate(() => {
+    const Original = window.AMap.Map;
+    window.__footprintMaps = 0;
+    window.AMap.Map = function (container, options) {
+      if (container === 'footprint-map') window.__footprintMaps++;
+      return new Original(container, options);
+    };
+    window.AMap.Map.prototype = Original.prototype;
+  });
+  await dragSheet(page, -220);
+  const row = page.locator('#sheet-body .mem').first();
+  await row.dispatchEvent('click');
+  await row.dispatchEvent('click');
+  await expect(page.locator('#footprint-map')).toBeVisible();
+  await page.waitForTimeout(2500);
+  expect(await page.evaluate(() => window.__footprintMaps)).toBe(1);
+});

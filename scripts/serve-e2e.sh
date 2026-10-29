@@ -5,6 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Read the port before .env is sourced, so a stray E2E_PORT there cannot make the server
+# listen somewhere other than where Playwright is waiting.
+PORT="${E2E_PORT:-5192}"
 if [ -f ./.env ]; then
   set -a; . ./.env; set +a
 fi
@@ -18,4 +21,4 @@ PYTHON="${PYTHON:-.venv/bin/python}"
 rm -f e2e.sqlite3
 "$PYTHON" manage.py migrate --noinput
 "$PYTHON" manage.py seed_demo
-exec "$PYTHON" manage.py runserver "127.0.0.1:${E2E_PORT:-5192}" --noreload
+exec "$PYTHON" manage.py runserver "127.0.0.1:$PORT" --noreload
