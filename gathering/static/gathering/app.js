@@ -176,8 +176,13 @@ function locationDialog(member, loc = {}) {
     <label>这段时间的近况<textarea name="note" maxlength="500" placeholder="如：在杭州工作，周末一般有空。">${escape(loc.note || '')}</textarea></label>
     <button type="submit" class="primary">保存${isEdit ? '修改' : '足迹'}</button></form>`, true);
   const generation = modalGeneration;
-  let A, marker, cityRequest = 0;
+  let A, marker, cityRequest = 0, pointRequest = 0;
   const active = () => generation === modalGeneration && $('#modal').open;
+  function clearPoint() {
+    pointRequest++;
+    $('#longitude').value = ''; $('#latitude').value = ''; marker?.setMap(null);
+    $('#point-status').textContent = '只记录城市；如需共享位置点，请重新选点。';
+  }
   const updateCountry = () => {
     const china = $('#country-select').value === 'CHN';
     ['#province-label', '#city-code-label', '#city-picker-label'].forEach(id => $(id).hidden = !china);
@@ -200,12 +205,13 @@ function locationDialog(member, loc = {}) {
   }
   function setPoint(lng, lat) {
     if (!active()) return;
+    const request = ++pointRequest;
     $('#longitude').value = Number(lng).toFixed(6); $('#latitude').value = Number(lat).toFixed(6);
     marker?.setMap(null); marker = new A.Marker({map: modalMap, position: [Number(lng), Number(lat)]});
     $('#point-status').textContent = '已选点，保存后才会更新班级地图。请核对下方所属城市。';
     if ($('#country-select').value === 'CHN') {
       new A.Geocoder().getAddress([Number(lng), Number(lat)], (status, result) => {
-        if (!active() || status !== 'complete' || !result.regeocode?.addressComponent) return;
+        if (!active() || request !== pointRequest || status !== 'complete' || !result.regeocode?.addressComponent) return;
         const address = result.regeocode.addressComponent;
         const province = String(address.adcode || '').slice(0, 2) + '0000';
         if (!state.boot.provinces[province]) return;
@@ -217,11 +223,14 @@ function locationDialog(member, loc = {}) {
       });
     }
   }
-  $('#country-select').onchange = () => {updateCountry();}; updateCountry();
+  $('#country-select').onchange = () => {
+    clearPoint(); updateCountry(); $('#city-name').value = ''; $('#city-code').value = '';
+    $('#province-select').value = ''; run(() => updateCities());
+  }; updateCountry();
   if (loc.coordinate_system) $('#coordinate-system').value = loc.coordinate_system;
-  $('#province-select').onchange = () => {run(() => updateCities()); if (modalMap && $('#province-select').value) modalMap.setCity($('#province-select').value);};
-  $('#city-select').onchange = () => {const option = $('#city-select').selectedOptions[0]; $('#city-code').value = option.value; $('#city-name').value = option.dataset.name || ''; if (option.value) modalMap?.setCity(option.value);};
-  $('#clear-point').onclick = () => {$('#longitude').value = ''; $('#latitude').value = ''; marker?.setMap(null); $('#point-status').textContent = '只记录城市，不共享位置点。';};
+  $('#province-select').onchange = () => {clearPoint(); run(() => updateCities()); if (modalMap && $('#province-select').value) modalMap.setCity($('#province-select').value);};
+  $('#city-select').onchange = () => {clearPoint(); const option = $('#city-select').selectedOptions[0]; $('#city-code').value = option.value; $('#city-name').value = option.dataset.name || ''; if (option.value) modalMap?.setCity(option.value);};
+  $('#clear-point').onclick = clearPoint;
   $('#gps-button').onclick = () => {
     if (!A) {notify('请先等待地图加载完成', true); return;}
     if (!navigator.geolocation) {notify('当前浏览器不支持设备定位', true); return;}
@@ -247,6 +256,7 @@ function locationDialog(member, loc = {}) {
   run(async () => {
     try {
       A = await loadMap(state.boot.map); if (!active()) return;
+      $('#editor-map').replaceChildren();
       modalMap = new A.Map('editor-map', {zoom: loc.longitude != null ? 10 : 4, center: loc.longitude != null ? [Number(loc.longitude), Number(loc.latitude)] : [104, 35], resizeEnable: true});
       if (loc.longitude != null) marker = new A.Marker({map: modalMap, position: [Number(loc.longitude), Number(loc.latitude)]});
       modalMap.on('click', event => setPoint(event.lnglat.lng, event.lnglat.lat));

@@ -102,6 +102,7 @@ export function districtChildren(A, province) {
 }
 
 export function createFootprintMap(A, element, locations) {
+  document.getElementById(element).replaceChildren();
   const map = new A.Map(element, {center: [104, 35], zoom: 3, resizeEnable: true});
   const points = [];
   locations.forEach((loc, index) => {
