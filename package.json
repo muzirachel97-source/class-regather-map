@@ -1,5 +1,6 @@
 {
   "name": "class-regather-map",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "scripts": {
