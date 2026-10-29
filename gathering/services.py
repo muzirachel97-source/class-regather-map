@@ -52,8 +52,9 @@ def secret_text(data, key):
 def validate_member_password(password):
     # Member accounts are a lightweight class directory, separate from staff
     # credentials and the shared viewing password's Django validators.
-    if len(password) < 6:
-        raise Problem('个人密码至少需要 6 位')
+    # Spec 5.9: any non-empty password; login throttling is the guard against guessing.
+    if not password:
+        raise Problem('请填写个人密码')
 
 
 def audit(classroom, actor, action, member=None, **detail):
