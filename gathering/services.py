@@ -137,8 +137,13 @@ def lock_member(member):
     return Member.objects.select_for_update().get(pk=member.pk)
 
 
+def is_self(member, actor):
+    # An admin editing their own member record counts as self too.
+    return bool(actor and actor.is_authenticated and member.user_id == actor.pk)
+
+
 @transaction.atomic
-def save_location(member, data, actor, location_id=None, check_version=True):
+def save_location(member, data, actor, location_id=None, check_version=True, confirm=True):
     member = lock_member(member)
     values = location_values(data)
     existing = None
@@ -165,9 +170,33 @@ def save_location(member, data, actor, location_id=None, check_version=True):
     for key, value in values.items():
         setattr(location, key, value)
     location.updated_by = actor
+    # Only the member saving their own stay confirms it; otherwise new rows stay
+    # unconfirmed and edits keep the previous value.
+    if confirm and is_self(member, actor):
+        location.confirmed_at = timezone.now()
     location.full_clean()
     location.save()
     audit(member.classroom, actor, 'location.update' if existing else 'location.create', member, location_id=location.pk)
+    return location
+
+
+@transaction.atomic
+def confirm_location(member, location_id, version, actor):
+    member = lock_member(member)
+    # Checked on the locked row so a concurrent claim reset cannot slip through.
+    if not is_self(member, actor):
+        raise Problem('只能确认自己的位置', 403)
+    location = member.locations.filter(pk=location_id).first()
+    if not location:
+        raise Problem('找不到这条足迹', 404)
+    if version != location.updated_at.isoformat():
+        raise Problem('记录已被更新，请刷新后再确认。', 409)
+    if location.ended_on and location.ended_on <= timezone.localdate():
+        raise Problem('这条位置已经结束')
+    # update() rather than save(): save() would bump updated_at (the edit version).
+    Location.objects.filter(pk=location.pk).update(confirmed_at=timezone.now())
+    audit(member.classroom, actor, 'location.confirm', member, location_id=location.pk)
+    location.refresh_from_db()
     return location
 
 
@@ -236,7 +265,7 @@ def import_rows(classroom, rows, actor, dry_run=False):
                     raise Problem('同一同学的到达日期重复')
                 seen.add(identity)
                 old = member.locations.filter(started_on=values['started_on']).first()
-                save_location(member, row, actor, old.pk if old else None, check_version=False)
+                save_location(member, row, actor, old.pk if old else None, check_version=False, confirm=False)
                 stays += 1
         except (Problem, ValidationError) as error:
             message = error.message if isinstance(error, Problem) else '; '.join(error.messages)
