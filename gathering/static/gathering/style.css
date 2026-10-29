@@ -130,6 +130,26 @@ form .primary { width: 100%; margin-top: 18px; }
 .empty .secondary { margin-top: 12px; width: 100%; }
 .account { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--line); }
 
+/* Update-my-location flow */
+.block { display: block; width: 100%; margin-top: 10px; }
+.who { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 14px; color: var(--sub); }
+.who b { color: var(--ink); font-weight: 600; }
+.who .text-button { margin-left: auto; }
+.card { border-radius: 16px; background: #f7f6fc; padding: 16px; margin: 10px 0 6px; }
+.card .big { font-size: 20px; font-weight: 700; margin: 4px 0 2px; }
+.note { font-size: 13px; color: var(--muted); text-align: center; margin-top: 10px; }
+.tog { display: flex; background: var(--chip); border-radius: var(--r-ctl); padding: 3px; margin-top: 12px; }
+.tog button { flex: 1; min-height: 44px; border-radius: 10px; font-weight: 600; font-size: 15px; color: var(--sub); }
+.tog button.on { background: #fff; color: var(--ink); box-shadow: 0 1px 4px rgba(23, 21, 58, .15); }
+.hint { font-size: 14px; color: var(--sub); margin-top: 8px; }
+.sugg button { width: 100%; min-height: 52px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); font-size: 16px; font-weight: 600; text-align: left; }
+.sugg button span { font-weight: 400; color: var(--muted); font-size: 14px; }
+.opt { position: relative; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; min-height: 52px; border-bottom: 1px solid var(--line); font-size: 15px; margin-top: 6px; }
+.opt .picker { flex-basis: 100%; }
+.field-error { color: var(--danger); font-size: 14px; margin-top: 6px; }
+.field-error:empty { display: none; }
+.savebar { position: sticky; bottom: var(--kb, 0px); padding: 10px 0 4px; background: linear-gradient(transparent, #fff 30%); }
+
 /* Member detail inside the sheet */
 #member-detail h2 { font-size: 22px; font-weight: 700; }
 .mini-map { height: 220px; border-radius: 16px; overflow: hidden; margin-top: 12px; background: #e9eef5; }

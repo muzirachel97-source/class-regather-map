@@ -60,6 +60,9 @@ class Command(BaseCommand):
         rows.append({'student_code': '009', 'name': '夏禾'})
         import_rows(room, rows, admin)
         member = Member.objects.get(classroom=room, student_code='001'); member.user = admin; member.is_admin = True; member.save()
+        # A second claimed, non-admin member so each e2e device profile updates its own person.
+        peer = Member.objects.get(classroom=room, student_code='002')
+        peer.user = get_user_model().objects.create_user('demo-member', password=password); peer.save()
         self.confirm_dates(room)
         self.stdout.write('Created fictional demo: /c/demo/ ; admin username: demo-admin')
 
@@ -71,8 +74,8 @@ class Command(BaseCommand):
         current = Location.objects.filter(member__classroom=room, ended_on__isnull=True).order_by('member__student_code')
         for index, location in enumerate(current):
             code = location.member.student_code
-            if code == '001':
-                day = today - timedelta(days=395)  # demo-admin's own stay: 13 months old, lights the stale dot
+            if code in ('001', '002'):
+                day = today - timedelta(days=395)  # the two claimed demo members: 13 months old, lights the stale dot
             elif index % 2:
                 day = recent[index // 2 % len(recent)]
             else:

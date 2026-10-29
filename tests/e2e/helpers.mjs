@@ -43,7 +43,12 @@ export async function tapMarker(page, locator) {
 
 export async function openWuhan(page) {
   const wuhan = page.locator('.pt', {has: page.locator('.nm', {hasText: /^武汉$/})});
-  for (let i = 0; i < 4 && !(await wuhan.count()); i++) {await tapMarker(page, page.locator('.pt.cl .d').first()); await page.waitForTimeout(800);}
+  const wuhanCluster = page.locator('.pt.cl', {has: page.locator('.nm', {hasText: /^武汉等/})});
+  await page.waitForTimeout(1200);  // initial fit animation
+  for (let i = 0; i < 4 && !(await wuhan.count()); i++) {
+    if (await wuhanCluster.count()) await tapMarker(page, wuhanCluster.locator('.d'));
+    await page.waitForTimeout(1000);
+  }
   await tapMarker(page, wuhan.locator('.d'));
   await expect(page.locator('#sheet')).toHaveAttribute('data-detent', 'half');
 }

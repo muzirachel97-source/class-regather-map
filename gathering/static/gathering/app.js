@@ -1,9 +1,10 @@
 import {cityKey, createMemberOrder, municipalities, placeName} from './logic.js';
 import {ClassMap, chinaDivisions, createFootprintMap, districtChildren, loadMap} from './map.js';
-import {consistentCounts, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
+import {consistentCounts, inRange, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
 import {createSheet} from './sheet.js';
 import {monthLabel, mountRange} from './range.js';
 import {memberRow, placeOf, regionTitle, section, sectionTitle, summaryLine} from './views.js';
+import {renderUpdate} from './update.js';
 import {buildEntryLink, readEntryLink} from './links.js';
 
 const $ = selector => document.querySelector(selector);
@@ -86,7 +87,10 @@ async function boot() {
     $('#map-status').hidden = false; $('#map-status').textContent = '正在载入地图…';
     try {
       const A = await loadMap(boot.map);
-      map ||= new ClassMap(A, 'map', {divisions: chinaDivisions(A), onPick: openRegion, onClusterPick: () => {}});
+      state.A = A;
+      const divisions = chinaDivisions(A);
+      divisions.then(loaded => {state.divisions = loaded;}, () => {});
+      map ||= new ClassMap(A, 'map', {divisions, onPick: openRegion, onClusterPick: () => {}});
       $('#map-status').hidden = true;
       render();
       map.fit();
@@ -150,7 +154,7 @@ function render() {
 const rows = (list, options) => list.map(member => memberRow(member, state.range, options)).join('');
 const moreRow = (text, note) => `<button type="button" class="more" data-more>${text}<span>${note}</span></button>`;
 function renderSheet() {
-  if (state.view.type === 'member') return;
+  if (state.view.type === 'member' || state.view.type === 'update') return;
   const home = state.view.type === 'home', full = sheet?.detent === 'full';
   $('#range').hidden = !home; $('#legend').hidden = !home; $('#region-close').hidden = home; $('#account').hidden = !home;
   const counts = consistentCounts(state.members, state.range);
@@ -245,6 +249,47 @@ async function memberDialog(id) {
     const A = await loadMap(state.boot.map);
     if (state.view.type === 'member' && state.view.id === id) footprintMap = createFootprintMap(A, 'footprint-map', chronological);
   } catch (error) {if (state.view.id === id) $('#footprint-map').textContent = error.message;}
+}
+function openUpdate() {
+  const me = state.boot.me;
+  const current = state.members.find(member => member.id === me.id)?.location || null;
+  const back = state.view.type === 'update' ? state.view.back : state.view;
+  footprintMap?.destroy(); footprintMap = null;
+  state.view = {type: 'update', back};
+  $('#range').hidden = true; $('#legend').hidden = true; $('#account').hidden = true; $('#region-close').hidden = false;
+  $('#range-chip').hidden = true;
+  $('#sheet-title').textContent = '更新我的位置';
+  $('#sheet-summary').textContent = '';
+  $('#list').innerHTML = '<div id="update"></div>';
+  sheet.snap('full');
+  renderUpdate($('#update'), {me, current, today: state.boot.today, api, notify, countries: state.boot.countries || {},
+    divisions: () => state.divisions, locate: locateCity,
+    todayInRange: () => inRange(`${state.boot.today}T12:00:00+08:00`, state.range),
+    onDone: async () => {await refresh(); goHome();},
+    onNotMe: () => run(async () => {await api('logout', 'POST', {}); goHome(); await boot(); authDialog('login');})});
+}
+// Device location → GCJ-02 → reverse geocode → prefecture city from the division list.
+function locateCity() {
+  return new Promise((resolve, reject) => {
+    const A = state.A;
+    if (!navigator.geolocation || !A) {reject(new Error('当前浏览器不支持设备定位，请直接输入城市。')); return;}
+    navigator.geolocation.getCurrentPosition(position => {
+      A.convertFrom([position.coords.longitude, position.coords.latitude], 'gps', (status, result) => {
+        if (status !== 'complete' || !result.locations?.length) {reject(new Error('定位转换失败，请直接输入城市。')); return;}
+        const point = result.locations[0];
+        new A.Geocoder().getAddress([point.lng, point.lat], (geoStatus, geo) => {
+          const adcode = geo?.regeocode?.addressComponent?.adcode;
+          if (geoStatus !== 'complete' || !adcode) {reject(new Error('没能识别所在城市，请直接输入。')); return;}
+          const province = adcode.slice(0, 2) + '0000';
+          resolve(state.divisions?.cities.get(municipalities.has(province) ? province : adcode.slice(0, 4) + '00') || null);
+        });
+      });
+    }, () => reject(new Error('未能获取设备位置，请直接输入城市。')), {timeout: 15000, maximumAge: 0});
+  });
+}
+function leaveUpdate() {
+  state.view = state.view.back || {type: 'home'};
+  render(); sheet.snap(state.view.type === 'home' ? 'peek' : 'half');
 }
 function leaveMember() {
   footprintMap?.destroy(); footprintMap = null;
@@ -437,9 +482,11 @@ bindForm('#unlock-form', async data => {await api('unlock', 'POST', data); await
 document.querySelectorAll('[data-scope]').forEach(button => button.onclick = () => setScope(button.dataset.scope));
 // A date picker opened from the peeking sheet would fall off the bottom of the screen.
 $('#range').addEventListener('click', event => {if (event.target.closest('[data-end]') && sheet.detent !== 'full') sheet.snap('full');}, true);
-$('#region-close').onclick = () => state.view.type === 'member' ? leaveMember() : goHome();
+$('#region-close').onclick = () => state.view.type === 'member' ? leaveMember() : state.view.type === 'update' ? leaveUpdate() : goHome();
 $('#range-chip').onclick = () => {goHome(); $('#range').scrollIntoView({block: 'nearest'});};
-$('#me-btn').onclick = () => state.boot.me ? run(() => memberDialog(state.boot.me.id)) : authDialog('login');
+$('#me-btn').onclick = () => state.boot.me ? openUpdate() : authDialog('login');
+// Keep the save bar above the on-screen keyboard (visual viewport shrinks, layout viewport does not).
+visualViewport?.addEventListener('resize', () => document.documentElement.style.setProperty('--kb', `${Math.max(0, innerHeight - visualViewport.height - visualViewport.offsetTop)}px`));
 $('#list').addEventListener('click', event => {
   const row = event.target.closest('[data-member]');
   if (row) {run(() => memberDialog(Number(row.dataset.member))); return;}
