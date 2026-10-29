@@ -1,5 +1,6 @@
-import {cityKey, dayNumber, dayString, municipalities, placeName, regionCounts, scopeMembers} from './logic.js';
+import {cityKey, createMemberOrder, dayNumber, dayString, municipalities, placeName, regionCounts, scopeMembers} from './logic.js';
 import {ClassMap, createFootprintMap, districtChildren, loadMap} from './map.js';
+import {buildEntryLink, readEntryLink} from './links.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -7,6 +8,12 @@ const options = (items, selected = '') => Object.entries(items).map(([value, nam
 const state = {level: 'china', province: '', selected: '', selectedName: '', unknown: false, search: '', members: [], at: '', boot: null};
 let map, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
 const apiRoot = new URL('api/', location.href);
+const orderMembers = createMemberOrder();
+const entryLink = readEntryLink(location.href);
+const entry = entryLink.values;
+if (entryLink.consumed) history.replaceState(history.state, '', entryLink.cleanUrl);
+let pendingClaim = !!entry.claim_code;
+$('#unlock-form [name="password"]').value = entry.view_code;
 
 async function api(path, method = 'GET', data) {
   const token = document.cookie.split('; ').find(item => item.startsWith('csrftoken='))?.split('=').slice(1).join('=') || '';
@@ -56,7 +63,13 @@ async function boot() {
   $('#my-password')?.addEventListener('click', passwordDialog);
   $('#admin-open')?.addEventListener('click', () => run(adminDialog));
   $('#logout')?.addEventListener('click', () => run(async () => {await api('logout', 'POST', {}); location.reload();}));
-  if (!boot.unlocked) {$('#overview').textContent = ''; return;}
+  if (!boot.unlocked) {
+    $('#overview').textContent = '';
+    $('#entry-hint').textContent = pendingClaim ? '认领信息已填好，请先输入查看码打开地图。' : entry.view_code ? '查看码已填好，点击打开班级地图即可。' : '';
+    return;
+  }
+  $('#unlock-form [name="password"]').value = ''; entry.view_code = '';
+  if (pendingClaim && !boot.me) {pendingClaim = false; authDialog('claim');}
   $('#province-view').innerHTML = '<option value="">各省 / 市</option>' + options(boot.provinces, state.province);
   state.at ||= boot.today; $('#snapshot-date').max = boot.today; $('#snapshot-date').value = state.at;
   await refresh();
@@ -64,7 +77,7 @@ async function boot() {
     $('#map-status').hidden = false; $('#map-status').textContent = '正在载入地图…';
     try {
       const A = await loadMap(boot.map);
-      map = new ClassMap(A, 'map', pickRegion, people => run(() => people.length === 1 ? memberDialog(people[0].id) : markerPeopleDialog(people)));
+      if (!map) map = new ClassMap(A, 'map', pickRegion, people => run(() => people.length === 1 ? memberDialog(people[0].id) : markerPeopleDialog(people)));
       $('#map-status').hidden = true; render();
     } catch (error) {$('#map-status').textContent = error.message;}
   }
@@ -73,7 +86,7 @@ async function refresh() {
   const request = ++snapshotRequest;
   const result = await api(`snapshot?at=${encodeURIComponent(state.at)}`);
   if (request !== snapshotRequest) return;
-  state.members = result.members;
+  state.members = orderMembers(result.members);
   state.timelineStart = result.timeline_start || state.boot.today;
   render();
 }
@@ -118,27 +131,43 @@ function render() {
   map?.update(state, state.members);
 }
 function markerPeopleDialog(people) {
-  openModal('这些同学在同一个坐标', `<div class="simple-list">${people.map(person => `<button data-id="${person.id}">${escape(person.name)} <span>查看足迹 →</span></button>`).join('')}</div>`);
+  openModal(`附近的 ${people.length} 位同学`, `<p class="muted">放大地图可展开附近点位。</p><div class="simple-list">${people.map(person => `<button data-id="${person.id}">${escape(person.name)} <span>查看足迹 →</span></button>`).join('')}</div>`);
   $('#modal-body').querySelectorAll('button').forEach(button => button.onclick = () => run(() => memberDialog(Number(button.dataset.id))));
 }
-function authDialog(mode) {
+function authDialog(mode, draft = entry, useCode = !draft.name && !!draft.student_code) {
   const claim = mode === 'claim';
   openModal(claim ? '认领我的身份' : '同学，欢迎回来', `<div class="segmented auth-tabs"><button id="tab-login" class="${claim ? '' : 'active'}">个人登录</button><button id="tab-claim" class="${claim ? 'active' : ''}">首次认领</button></div>
-    <p class="muted">${claim ? '使用管理员发给你的班级编号和一次性认领码，设置自己的登录密码。' : '输入管理员分配的班级编号和你自己设置的密码。'}</p>
-    <form id="auth-form"><label>班级编号<input name="student_code" autocomplete="username" maxlength="64" required></label>${claim ? '<label>一次性认领码<input name="claim_code" autocomplete="off" maxlength="200" required></label>' : ''}
-    <label>${claim ? '设置个人密码（至少 10 位）' : '个人密码'}<input name="password" type="password" autocomplete="${claim ? 'new-password' : 'current-password'}" maxlength="200" ${claim ? 'minlength="10"' : ''} required></label>
-    ${claim && !state.boot.unlocked ? '<p class="form-error">认领前请先关闭窗口，输入班级解锁密码。</p>' : ''}<button type="submit" class="primary" ${claim && !state.boot.unlocked ? 'disabled' : ''}>${claim ? '认领并进入' : '登录'}</button></form><p class="muted">忘记个人密码可联系管理员重新发放认领码。</p>`);
-  $('#tab-login').onclick = () => authDialog('login'); $('#tab-claim').onclick = () => authDialog('claim');
-  bindForm('#auth-form', async data => {await api(claim ? 'claim' : 'login', 'POST', data); closeModal(); await boot(); notify(claim ? '认领成功，可以更新自己的位置了。' : '已登录');});
+    <p class="muted">${claim ? '填写姓名和管理员发给你的一次性认领码，再设置自己的密码。个人密码至少 6 位，无需混合字母、数字或符号。' : '使用名单中的姓名和自己设置的密码登录。'}</p>
+    <form id="auth-form"><label>${useCode ? '班级编号' : '姓名'}<input name="${useCode ? 'student_code' : 'name'}" value="${escape(useCode ? draft.student_code : draft.name)}" autocomplete="username" maxlength="${useCode ? 64 : 60}" required></label>${claim ? `<label>一次性认领码<input name="claim_code" value="${escape(draft.claim_code)}" autocomplete="off" maxlength="200" required></label>` : ''}
+    <label>${claim ? '设置个人密码（至少 6 位）' : '个人密码'}<input name="password" type="password" autocomplete="${claim ? 'new-password' : 'current-password'}" maxlength="200" ${claim ? 'minlength="6"' : ''} required></label>
+    ${claim && !state.boot.unlocked ? '<p class="form-error">认领前请先关闭窗口，输入班级查看码。</p>' : ''}<button type="submit" class="primary" ${claim && !state.boot.unlocked ? 'disabled' : ''}>${claim ? '认领并进入' : '登录'}</button></form>
+    <details><summary>同名或使用原来的班级编号</summary><p class="muted">同名同学可凭各自的认领码认领；登录时请使用管理员提供的班级编号。</p><button id="identity-toggle" class="text-button">${useCode ? '改用姓名' : '使用班级编号'}</button></details><p class="muted">忘记个人密码可联系管理员重新发放认领码。</p>`);
+  const remember = () => {
+    const values = Object.fromEntries(new FormData($('#auth-form')));
+    const saved = {...draft, ...values}; delete saved.password;
+    Object.assign(entry, {name: saved.name || '', student_code: saved.student_code || '', claim_code: saved.claim_code || ''});
+    if (claim && !state.boot.unlocked) pendingClaim = !!entry.claim_code;
+    return saved;
+  };
+  $('#auth-form').addEventListener('input', remember);
+  $('#tab-login').onclick = () => authDialog('login', remember(), useCode);
+  $('#tab-claim').onclick = () => authDialog('claim', remember(), useCode);
+  $('#identity-toggle').onclick = () => authDialog(mode, remember(), !useCode);
+  bindForm('#auth-form', async data => {
+    await api(claim ? 'claim' : 'login', 'POST', data);
+    entry.claim_code = ''; pendingClaim = false;
+    closeModal(); await boot(); notify(claim ? '认领成功，可以更新自己的位置了。' : '已登录');
+  });
 }
 function passwordDialog() {
-  openModal('修改个人密码', '<form id="password-form"><label>原密码<input type="password" name="old_password" autocomplete="current-password" required></label><label>新密码（至少 10 位）<input type="password" name="password" autocomplete="new-password" minlength="10" maxlength="200" required></label><button class="primary" type="submit">保存新密码</button></form>');
+  const minimum = state.boot.is_admin ? 10 : 6;
+  openModal('修改个人密码', `<form id="password-form"><label>原密码<input type="password" name="old_password" autocomplete="current-password" required></label><label>新密码（至少 ${minimum} 位）<input type="password" name="password" autocomplete="new-password" minlength="${minimum}" maxlength="200" required></label><button class="primary" type="submit">保存新密码</button></form>`);
   bindForm('#password-form', async data => {await api('password', 'POST', data); closeModal(); notify('个人密码已更新，其他设备需要重新登录。');});
 }
 async function memberDialog(id) {
   const detail = await api(`members/${id}`), member = detail.member;
   const chronological = detail.locations;
-  openModal(`${member.name}的足迹`, `<div class="profile-summary"><span class="avatar large tone-${member.id % 4}">${escape(member.name.slice(0, 1))}</span><div><h3>${escape(member.name)}</h3><p>${escape(member.bio || '下次路过，记得约一顿饭。')}</p><small>${detail.locations.length} 段足迹${member.student_code ? ` · 班级编号 ${escape(member.student_code)}` : ''}</small></div></div>
+  openModal(`${member.name}的足迹`, `<div class="profile-summary"><span class="avatar large tone-${member.id % 4}">${escape(member.name.slice(0, 1))}</span><div><h3>${escape(member.name)}</h3><p>${escape(member.bio || '下次路过，记得约一顿饭。')}</p><small>${detail.locations.length} 段足迹</small></div></div>
     ${detail.editable ? '<div class="actions"><button id="add-location" class="primary">＋ 更新位置 / 补录历史</button><button id="edit-profile">编辑资料</button></div>' : ''}
     <div id="footprint-map" class="mini-map"><p class="map-inline-status">正在加载足迹地图…</p></div><p class="muted small">编号按时间排序；连线表示足迹顺序，不代表实际行程。没有坐标的记录仍显示在下方。</p>
     <div class="footprint-list">${[...chronological].reverse().map((loc, i) => `<article class="footprint"><span class="step">${chronological.length - i}</span><div><h3>${escape(placeName(loc))}</h3><div class="stay-date">${loc.started_on} → ${loc.ended_on || '至今'}${loc.ended_on ? '（离开当天起不计入）' : ''}</div><p>${escape(loc.note)}</p><small>资料更新于 ${escape(new Date(loc.updated_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}))}</small>${detail.editable ? `<div class="record-actions"><button class="text-button" data-edit="${loc.id}">编辑</button><button class="text-button danger" data-delete="${loc.id}">删除</button></div>` : ''}</div></article>`).join('') || '<p class="empty-small">还没有足迹，留下第一个坐标吧。</p>'}</div>`, true);
@@ -156,7 +185,7 @@ async function memberDialog(id) {
   catch (error) {if (generation === modalGeneration) $('#footprint-map').textContent = error.message;}
 }
 function profileDialog(member) {
-  openModal('编辑我的资料', `<form id="profile-form"><label>姓名 / 昵称<input name="name" maxlength="60" value="${escape(member.name)}" required></label><label>一句近况<textarea name="bio" maxlength="240">${escape(member.bio)}</textarea></label><button type="submit" class="primary">保存资料</button></form>`);
+  openModal('编辑我的资料', `<form id="profile-form"><label>姓名 / 昵称<input name="name" maxlength="60" value="${escape(member.name)}" required></label><p class="muted">修改后请使用新的姓名登录。</p><label>一句近况<textarea name="bio" maxlength="240">${escape(member.bio)}</textarea></label><button type="submit" class="primary">保存资料</button></form>`);
   bindForm('#profile-form', async data => {await api(`members/${member.id}`, 'PATCH', {...data, version: member.updated_at}); await refresh(); await memberDialog(member.id); notify('资料已保存');});
 }
 
@@ -272,12 +301,20 @@ function download(name, content, type = 'text/csv;charset=utf-8') {
 }
 async function adminDialog() {
   const settings = await api('admin/settings');
-  openModal('班级管理', `<div class="admin-tabs"><button id="import-open" class="primary">导入同学与已知位置</button><button id="template-download">下载 CSV 模板</button></div>
+  openModal('班级管理', `<div class="admin-tabs"><button id="import-open" class="primary">导入同学与已知位置</button><button id="template-download">下载 CSV 模板</button><button id="share-view">分享查看链接</button></div>
     <details><summary>班级名称与解锁密码</summary><form id="settings-form"><label>班级名称<input name="name" maxlength="80" required value="${escape(settings.name)}"></label><label>班级说明<input name="description" maxlength="240" value="${escape(settings.description)}"></label><label>新的班级密码<input name="password" type="password" autocomplete="new-password" minlength="10" maxlength="200" placeholder="留空则不修改"></label><label class="checkbox"><input type="checkbox" name="remove_password">取消班级解锁密码，允许任何访客查看</label><p class="muted">目前${settings.has_password ? '已设置' : '未设置'}班级密码。修改密码会使之前的访客解锁失效。</p><button type="submit">保存班级设置</button></form></details>
     <div class="list-heading"><span>身份认领 · ${state.members.length} 位同学</span></div><p class="muted">认领码有效期 7 天，仅在生成时显示。请单独发给本人；重新认领会立即撤销原登录。</p>
     <div class="admin-members">${state.members.map(member => `<div><span><strong>${escape(member.name)}</strong><small>${escape(member.student_code || '')} · ${member.claimed ? '已认领' : '待认领'}</small></span><div class="actions"><button data-edit-member="${member.id}">编辑</button><button data-invite="${member.id}" data-claimed="${member.claimed}">${member.claimed ? '重新认领' : '生成认领码'}</button></div></div>`).join('') || '<p>还没有同学，请先导入班级名单。</p>'}</div>`, true);
   $('#template-download').onclick = () => download('class-import-template.csv', importTemplate);
   $('#import-open').onclick = importDialog;
+  $('#share-view').onclick = () => {
+    openModal('分享班级地图', `<form id="view-link-form">${settings.has_password ? '<label>当前班级查看码<input name="view_code" type="password" maxlength="200" autocomplete="off" required></label>' : ''}<p class="muted">${settings.has_password ? '填入当前查看码，接收者打开链接后只需点击“打开班级地图”。请只发给允许查看的同学。' : '当前班级允许访客直接查看。'}</p><button type="submit" class="primary">生成查看链接</button></form><div id="view-link-result"></div>`);
+    bindForm('#view-link-form', async data => {
+      const link = buildEntryLink(location.href, data);
+      $('#view-link-result').innerHTML = `<label>查看链接<input readonly value="${escape(link)}"></label><button id="copy-view-link">复制查看链接</button>`;
+      $('#copy-view-link').onclick = () => run(async () => {await navigator.clipboard.writeText(link); notify('已复制查看链接');});
+    });
+  };
   bindForm('#settings-form', async data => {
     if (data.remove_password === 'on') data.password = '';
     else if (!data.password) delete data.password;
@@ -293,8 +330,10 @@ async function adminDialog() {
       $('#issue-confirm').disabled = true;
       try {
         const invitation = await api(`admin/members/${id}/invite`, 'POST', {reset});
-        openModal('认领码已生成', `<p>请单独交给 ${escape(invitation.name)}，关闭后无法再次查看。</p><label>班级编号<input readonly value="${escape(invitation.student_code)}"></label><label>一次性认领码<input id="claim-value" readonly value="${escape(invitation.claim_code)}"></label><p class="muted">有效至 ${escape(new Date(invitation.expires_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}))}</p><button id="copy-invite" class="primary">复制认领信息</button>`);
-        $('#copy-invite').onclick = () => run(async () => {await navigator.clipboard.writeText(`班级地图：${location.origin}${location.pathname}\n班级编号：${invitation.student_code}\n一次性认领码：${invitation.claim_code}\n请先输入班级解锁密码，再点“认领 / 登录”。`); notify('已复制');});
+        const linkValues = {name: invitation.name, claim_code: invitation.claim_code};
+        openModal('认领码已生成', `<p>请单独交给 ${escape(invitation.name)}，关闭后无法再次查看。</p><label>一次性认领码<input id="claim-value" readonly value="${escape(invitation.claim_code)}"></label>${settings.has_password ? '<label>同时预填查看码（可选）<input id="invite-view-code" type="password" maxlength="200" autocomplete="off" placeholder="填入当前班级查看码"></label>' : ''}<label>认领链接<input id="invite-link" readonly value="${escape(buildEntryLink(location.href, linkValues))}"></label><p class="muted">打开链接会预填姓名和认领码。有效至 ${escape(new Date(invitation.expires_at).toLocaleString('zh-CN', {timeZone: 'Asia/Shanghai'}))}</p><button id="copy-invite" class="primary">复制认领链接</button><details><summary>同名同学的登录备用信息</summary><p>班级编号：${escape(invitation.student_code)}</p></details>`);
+        $('#invite-view-code')?.addEventListener('input', event => {$('#invite-link').value = buildEntryLink(location.href, {...linkValues, view_code: event.target.value});});
+        $('#copy-invite').onclick = () => run(async () => {await navigator.clipboard.writeText($('#invite-link').value); notify('已复制认领链接');});
       } catch (error) {$('#issue-confirm').disabled = false; throw error;}
     });
   });

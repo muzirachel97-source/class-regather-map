@@ -29,3 +29,41 @@ export const dayNumber = date => Math.floor(Date.parse(date + 'T00:00:00Z') / 86
 export const dayString = day => new Date(day * 86400000).toISOString().slice(0, 10);
 export const placeName = loc => loc ? [loc.country_code === 'CHN' ? loc.province_name : loc.country_name,
   loc.city_name !== loc.province_name ? loc.city_name : '', loc.label].filter(Boolean).join(' · ') : '还没有填写位置';
+
+// Shuffle once per page load; filtering and history navigation keep that order.
+export function createMemberOrder(random = Math.random) {
+  const ranks = new Map();
+  return members => {
+    const unseen = members.filter(member => !ranks.has(member.id));
+    for (let i = unseen.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [unseen[i], unseen[j]] = [unseen[j], unseen[i]];
+    }
+    unseen.forEach(member => ranks.set(member.id, ranks.size));
+    return [...members].sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
+  };
+}
+
+// Use the SDK's screen projection so zoom, rotation and latitude all count.
+// Fixed anchors avoid a chain of nearby points swallowing a whole city.
+export function clusterMembers(members, project, radius = 48) {
+  const clusters = [];
+  for (const member of [...members].sort((a, b) => a.id - b.id)) {
+    const loc = member.location;
+    if (loc?.longitude == null || loc.latitude == null) continue;
+    const position = [Number(loc.longitude), Number(loc.latitude)];
+    if (!position.every(Number.isFinite)) continue;
+    const point = project(position);
+    if (!point || !Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+    let nearest, distance = radius;
+    for (const cluster of clusters) {
+      const d = Math.hypot(point.x - cluster.point.x, point.y - cluster.point.y);
+      if (d <= distance) {nearest = cluster; distance = d;}
+    }
+    if (nearest) nearest.people.push(member);
+    else clusters.push({point, position, people: [member]});
+  }
+  const order = new Map(members.map((member, index) => [member.id, index]));
+  clusters.forEach(cluster => cluster.people.sort((a, b) => order.get(a.id) - order.get(b.id)));
+  return clusters;
+}

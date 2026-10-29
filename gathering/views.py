@@ -20,7 +20,7 @@ from django.views.decorators.http import require_GET
 from .geography import PROVINCES, countries, country_name
 from .models import Classroom, Location, Member
 from .services import (Problem, audit, import_rows, issue_claim, lock_member, parse_date, parse_import,
-                       save_location, secret_text, string, throttle)
+                       save_location, secret_text, string, throttle, validate_member_password)
 
 
 def csrf_failure(request, reason=''):
@@ -36,7 +36,10 @@ def health(request):
 
 @require_GET
 def home(request):
-    return redirect('class-page', slug=settings.DEFAULT_CLASS_SLUG)
+    response = redirect('class-page', slug=settings.DEFAULT_CLASS_SLUG)
+    if request.GET:
+        response['Location'] += '?' + request.GET.urlencode()
+    return response
 
 
 @ensure_csrf_cookie
@@ -157,13 +160,15 @@ def unlock(request, classroom, data):
 
 @endpoint(('POST',), access='public')
 def sign_in(request, classroom, data):
-    code = string(data, 'student_code', 64, True)
+    field, identity = member_identity(data)
     password = secret_text(data, 'password')
-    auth_throttle(request, classroom, 'login', code)
-    member = classroom.members.select_related('user').filter(student_code=code).first()
+    auth_throttle(request, classroom, 'login', f'{field}:{identity}')
+    candidates = list(classroom.members.select_related('user').filter(**{field: identity})[:2])
+    # Never silently select the first of two classmates with the same name.
+    member = candidates[0] if len(candidates) == 1 else None
     user = authenticate(request, username=member.user.username if member and member.user else f'missing_{secrets.token_hex(16)}', password=password)
     if not user:
-        raise Problem('班级编号或个人密码不正确', 403)
+        raise Problem('姓名或个人密码不正确；同名同学可使用班级编号登录' if field == 'name' else '班级编号或个人密码不正确', 403)
     login(request, user)
     return {'ok': True}
 
@@ -174,18 +179,30 @@ def sign_out(request, classroom, data):
     return {'ok': True}
 
 
+def member_identity(data):
+    name = string(data, 'name', 60)
+    student_code = string(data, 'student_code', 64)
+    if bool(name) == bool(student_code):
+        raise Problem('请填写姓名，或使用班级编号')
+    return ('name', name) if name else ('student_code', student_code)
+
+
 @endpoint(('POST',))
 def claim(request, classroom, data):
-    student_code = string(data, 'student_code', 64, True)
+    field, identity = member_identity(data)
     code = secret_text(data, 'claim_code')
     password = secret_text(data, 'password')
-    auth_throttle(request, classroom, 'claim', student_code)
-    validate_password(password)
+    auth_throttle(request, classroom, 'claim', f'{field}:{identity}')
+    validate_member_password(password)
     with transaction.atomic():
         Classroom.objects.select_for_update().get(pk=classroom.pk)
-        member = classroom.members.select_for_update().filter(student_code=student_code).first()
-        if not member or not member.claim_hash or not member.claim_expires_at or member.claim_expires_at <= timezone.now() or not check_password(code, member.claim_hash):
-            raise Problem('编号或认领码不正确，或认领码已过期', 403)
+        candidates = classroom.members.select_for_update().filter(**{field: identity}, claim_expires_at__gt=timezone.now()).exclude(claim_hash='')
+        matches = [member for member in candidates if check_password(code, member.claim_hash)]
+        if len(matches) != 1:
+            raise Problem('姓名或认领码不正确，或认领码已过期', 403)
+        member = matches[0]
+        if member.is_admin or member.user and (member.user.is_staff or member.user.is_superuser):
+            validate_password(password, member.user)
         user = member.user or get_user_model()(username=f'm_{secrets.token_hex(16)}')
         user.set_password(password)
         user.save()
@@ -198,13 +215,17 @@ def claim(request, classroom, data):
 
 @endpoint(('POST',))
 def password_change(request, classroom, data):
-    if not current_member(request, classroom):
+    member = current_member(request, classroom)
+    if not member:
         raise Problem('请先登录个人账号', 403)
     auth_throttle(request, classroom, 'password', str(request.user.pk))
     if not request.user.check_password(secret_text(data, 'old_password')):
         raise Problem('原密码不正确', 403)
     password = secret_text(data, 'password')
-    validate_password(password, request.user)
+    if member.is_admin or request.user.is_staff or request.user.is_superuser:
+        validate_password(password, request.user)
+    else:
+        validate_member_password(password)
     request.user.set_password(password)
     request.user.save(update_fields=['password'])
     update_session_auth_hash(request, request.user)

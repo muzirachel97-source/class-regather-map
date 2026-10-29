@@ -49,6 +49,13 @@ def secret_text(data, key):
     return value
 
 
+def validate_member_password(password):
+    # Member accounts are a lightweight class directory, separate from staff
+    # credentials and the shared viewing password's Django validators.
+    if len(password) < 6:
+        raise Problem('个人密码至少需要 6 位')
+
+
 def audit(classroom, actor, action, member=None, **detail):
     AuditEvent.objects.create(classroom=classroom, actor=actor if actor and actor.is_authenticated else None,
                               action=action, member=member, detail=detail)

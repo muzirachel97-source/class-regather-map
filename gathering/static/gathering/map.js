@@ -1,8 +1,9 @@
-import {chinaCountry, cityKey, provinceKey, regionCounts, scopeMembers} from './logic.js';
+import {chinaCountry, cityKey, clusterMembers, provinceKey, regionCounts, scopeMembers} from './logic.js';
 
 let loading;
 let loadAttempt = 0;
 const plugins = ['AMap.DistrictLayer', 'AMap.DistrictSearch', 'AMap.Geocoder', 'AMap.ToolBar', 'AMap.Scale'];
+const markerEvents = ['complete', 'zoomend', 'moveend', 'resize'];
 const isReady = A => A?.Map && A.DistrictLayer?.World && A.DistrictLayer?.Country && A.DistrictLayer?.Province && A.DistrictSearch && A.Geocoder && A.ToolBar && A.Scale;
 export function loadMap(config) {
   if (isReady(window.AMap)) return Promise.resolve(window.AMap);
@@ -44,7 +45,10 @@ export class ClassMap {
     this.map.addControl(new A.ToolBar({position: 'RB'}));
     this.map.addControl(new A.Scale());
     this.markers = [];
+    this.members = [];
     this.onMember = onMember;
+    this.refreshMarkers = () => this.renderMarkers();
+    for (const event of markerEvents) this.map.on(event, this.refreshMarkers);
     this.map.on('click', event => {
       const props = this.layer?.getDistrictByContainerPos(event.pixel);
       if (!props || !this.state) return;
@@ -55,6 +59,7 @@ export class ClassMap {
   }
   update(state, members, reset = false) {
     this.state = {...state};
+    this.members = scopeMembers(members, state);
     const layerId = `${state.level}:${state.province}`;
     const counts = regionCounts(members, state);
     const maximum = Math.max(1, ...counts.values());
@@ -74,35 +79,34 @@ export class ClassMap {
       reset = true;
     } else this.layer.setStyles({fill});
     // Leave the provider's boundary geometry, line styles, attribution and review number intact.
+    if (reset) this.reset();
+    this.renderMarkers();
+  }
+  renderMarkers() {
     this.map.remove(this.markers);
     this.markers = [];
-    const grouped = new Map();
-    for (const member of scopeMembers(members, {...state, search: ''})) {
-      const loc = member.location;
-      if (loc?.longitude == null || loc.latitude == null) continue;
-      const key = `${loc.longitude},${loc.latitude}`;
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(member);
-    }
-    for (const people of grouped.values()) {
-      const loc = people[0].location;
+    const clusters = clusterMembers(this.members, position => this.map.lngLatToContainer(new this.A.LngLat(...position)));
+    for (const {people, position} of clusters) {
       const content = document.createElement('button');
-      content.className = 'map-marker';
+      content.className = `map-marker${people.length > 1 ? ' map-cluster' : ''}`;
       content.textContent = people.length > 1 ? String(people.length) : people[0].name.slice(0, 1);
-      content.setAttribute('aria-label', people.map(p => p.name).join('、'));
+      content.setAttribute('aria-label', people.length > 1 ? `附近 ${people.length} 位同学，点击查看` : people[0].name);
       content.addEventListener('click', event => {event.stopPropagation(); this.onMember(people);});
-      const marker = new this.A.Marker({position: [Number(loc.longitude), Number(loc.latitude)], content, offset: new this.A.Pixel(-17, -17), zIndex: 120});
+      const offset = people.length > 1 ? -21 : -17;
+      const marker = new this.A.Marker({position, content, offset: new this.A.Pixel(offset, offset), zIndex: 120, bubble: false});
       this.markers.push(marker);
     }
     this.map.add(this.markers);
-    if (reset) this.reset();
   }
   reset() {
     if (this.state.level === 'world') this.map.setZoomAndCenter(2, [105, 28]);
     else if (this.state.level === 'china') this.map.setZoomAndCenter(4, [104, 35]);
     else this.map.setCity(this.state.province);
   }
-  destroy() {this.map.destroy();}
+  destroy() {
+    for (const event of markerEvents) this.map.off(event, this.refreshMarkers);
+    this.map.destroy();
+  }
 }
 
 export function districtChildren(A, province) {

@@ -32,3 +32,24 @@ test('date timeline is invariant across daylight saving and leap years', () => {
   for (const day of ['2020-02-29', '2024-03-10', '2025-11-02']) assert.equal(dayString(dayNumber(day)), day);
   assert.equal(dayString(dayNumber('2024-02-28') + 1), '2024-02-29');
 });
+
+test('member order is shuffled once, stable across history and searches, without mutating inputs', async () => {
+  const {createMemberOrder} = await import('../gathering/static/gathering/logic.js');
+  const order = createMemberOrder(() => 0);
+  const first = order(members);
+  assert.deepEqual(first.map(m => m.id), [2, 3, 4, 1]);
+  assert.deepEqual(members.map(m => m.id), [1, 2, 3, 4]);
+  assert.deepEqual(order([...members].reverse()).map(m => m.id), [2, 3, 4, 1]);
+  assert.deepEqual(order([members[0], members[2]]).map(m => m.id), [3, 1]);
+  assert.deepEqual(order([...members, {id: 5}]).map(m => m.id), [2, 3, 4, 1, 5]);
+});
+
+test('nearby points merge at small scales and split when enlarged, identical points stay together', async () => {
+  const {clusterMembers} = await import('../gathering/static/gathering/logic.js');
+  const rows = [0, 0.1, 2, 0].map((lng, i) => ({id: i, location: {longitude: lng, latitude: 0}}));
+  const project = scale => ([lng, lat]) => ({x: lng * scale, y: lat * scale});
+  assert.deepEqual(clusterMembers(rows, project(100)).map(c => c.people.map(m => m.id)), [[0, 1, 3], [2]]);
+  assert.deepEqual(clusterMembers(rows, project(1000)).map(c => c.people.map(m => m.id)), [[0, 3], [1], [2]]);
+  assert.equal(clusterMembers([{id: 9, location: null}, {id: 10, location: {longitude: 'NaN', latitude: 0}}], project(1)).length, 0);
+  assert.deepEqual(clusterMembers([...rows].reverse(), project(100)).map(c => c.people.map(m => m.id)), [[3, 1, 0], [2]]);
+});
