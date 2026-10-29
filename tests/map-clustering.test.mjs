@@ -145,3 +145,19 @@ test('focus centres the map on a city dot', () => withDocument(() => {
   map.focus('420100');
   assert.deepEqual(map.map.centre, [114.3, 30.6]);
 }));
+
+test('people without a known position are reported, never dropped silently or thrown on', () => withDocument(() => {
+  const reports = [];
+  const map = new ClassMap(stubSDK(), 'map', {divisions: null, onUnplaced: n => reports.push(n)});
+  map.map.scale = 1000;
+  map.update([{id: 1, name: 'a', location: loc('420100')}, {id: 2, name: 'b', location: loc('110000', {longitude: '116.4', latitude: '39.9'})}], range);
+  assert.equal(map.markers.length, 1);
+  assert.deepEqual(reports.at(-1), 1);
+  map.setLevel('world');
+  assert.doesNotThrow(() => map.update([{id: 3, name: 'c', location: {country_code: 'XXX', country_name: '某地', confirmed_at: at}}], range));
+  assert.deepEqual(reports.at(-1), 1);
+  map.setDivisions(divisions);
+  map.setLevel('china');
+  map.update([{id: 1, name: 'a', location: loc('420100')}], range);
+  assert.deepEqual(reports.at(-1), 0);
+}));

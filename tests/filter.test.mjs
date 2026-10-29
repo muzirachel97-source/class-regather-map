@@ -66,8 +66,10 @@ test('splitForRegion puts out-of-range both sides into others', () => {
   const {inRange: inside, others} = splitForRegion(members, '420100', 'china', range);
   assert.deepEqual(inside.map(m => m.id), [5, 1]);
   assert.deepEqual(others.map(m => m.id), [2, 3, 4]);
-  // null key: every located member regardless of region (the home "recent updates" list).
-  assert.deepEqual(splitForRegion(members, null, 'china', range).inRange.map(m => m.id), [5, 6, 1]);
+  // null key: every located member of that level (the home list), never the other level.
+  const abroad = person(9, at('2024-08-01'), {country_code: 'JPN', province_code: '', city_code: ''});
+  assert.deepEqual(splitForRegion([...members, abroad], null, 'china', range).inRange.map(m => m.id), [5, 6, 1]);
+  assert.deepEqual(splitForRegion([...members, abroad], null, 'world', range).inRange.map(m => m.id), [9]);
 });
 
 test('cluster merges close points and keeps far ones', () => {

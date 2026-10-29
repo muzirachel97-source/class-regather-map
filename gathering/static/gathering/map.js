@@ -49,8 +49,9 @@ const shortName = name => String(name || '').replace(/(特别行政区|维吾尔
 // Full-screen class map: district fill by count bucket plus one count dot per city
 // (per country overseas). Dots that would overlap merge into a cluster dot.
 export class ClassMap {
-  constructor(A, element, {onPick = () => {}, onClusterPick = () => {}, divisions = null} = {}) {
+  constructor(A, element, {onPick = () => {}, onClusterPick = () => {}, onUnplaced = () => {}, divisions = null} = {}) {
     this.A = A;
+    this.onUnplaced = onUnplaced;
     this.onPick = onPick;
     this.onClusterPick = onClusterPick;
     this.level = 'china';
@@ -62,8 +63,7 @@ export class ClassMap {
     this.map = new A.Map(element, {zoom: 4, center: [108, 33], viewMode: '3D', pitch: 0, resizeEnable: true,
       showIndoorMap: false, isHotspot: false, mapStyle: 'amap://styles/whitesmoke'});
     this.map.addControl(new A.Scale());
-    if (divisions?.then) divisions.then(loaded => {this.divisions = loaded; this.renderMarkers();}, () => {});
-    else this.divisions = divisions;
+    this.setDivisions(divisions);
     this.refreshMarkers = () => this.renderMarkers();
     for (const event of markerEvents) this.map.on(event, this.refreshMarkers);
     this.map.on('click', event => {
@@ -74,7 +74,11 @@ export class ClassMap {
     });
     this.buildLayer();
   }
-  setLevel(level) {
+  setDivisions(divisions) {
+    if (divisions?.then) divisions.then(loaded => {this.divisions = loaded; this.renderMarkers();}, () => {});
+    else {this.divisions = divisions; this.renderMarkers();}
+  }
+    setLevel(level) {
     if (level === this.level) return;
     this.level = level;
     this.selected = null;
@@ -114,10 +118,13 @@ export class ClassMap {
       groups.set(key, group);
     }
     const points = [];
+    let unplaced = 0;
     for (const group of groups.values()) {
       const place = this.place(group);
-      if (place) points.push({key: group.key, n: group.n, ...place});
+      if (place?.position?.every(Number.isFinite)) points.push({key: group.key, n: group.n, ...place});
+      else unplaced += group.n;  // reported, so the sheet can say the map is short by N people
     }
+    this.unplaced = unplaced;
     return points;
   }
   place({key, coords, loc}) {
@@ -136,9 +143,10 @@ export class ClassMap {
     return position && {position, label: shortName(city?.name || loc.city_name)};
   }
   renderMarkers() {
-    if (!this.range) return;
+    if (!this.range || !this.layer) return;
     this.map.remove(this.markers);
     const points = this.points();
+    this.onUnplaced(this.unplaced);
     for (const point of points) {
       const pixel = this.map.lngLatToContainer(new this.A.LngLat(...point.position));
       Object.assign(point, {x: pixel.x, y: pixel.y});

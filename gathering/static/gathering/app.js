@@ -4,7 +4,7 @@ import {consistentCounts, inRange, isStale, memberKey, presetRange, splitForRegi
 import {createSheet} from './sheet.js';
 import {monthLabel, mountRange} from './range.js';
 import {memberRow, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
-import {placeSearch, renderUpdate} from './update.js';
+import {closeUpdate, placeSearch, renderUpdate} from './update.js';
 import {dayPicker} from './pickers.js';
 import {buildEntryLink, readEntryLink} from './links.js';
 
@@ -88,9 +88,14 @@ async function boot() {
     try {
       const A = await loadMap(boot.map);
       state.A = A;
-      const divisions = chinaDivisions(A);
-      divisions.then(loaded => {state.divisions = loaded;}, () => {});
-      map ||= new ClassMap(A, 'map', {divisions, onPick: openRegion, onClusterPick: () => {}});
+      // One DistrictSearch for dot positions and the city search; retried if it fails.
+      const loadDivisions = () => {
+        const request = chinaDivisions(A);
+        request.then(loaded => {state.divisions = loaded;}, () => setTimeout(() => map?.setDivisions(loadDivisions()), 5000));
+        return request;
+      };
+      map ||= new ClassMap(A, 'map', {divisions: loadDivisions(), onPick: openRegion, onClusterPick: () => {},
+        onUnplaced: n => {$('#unplaced').hidden = !n; $('#unplaced').textContent = n ? `地图上暂时少画了 ${n} 人，名单是完整的` : '';}});
       $('#map-status').hidden = true;
       render();
       map.fit();
@@ -160,9 +165,11 @@ function renderSheet() {
   const counts = consistentCounts(state.members, state.range);
   let html;
   if (home) {
-    $('#sheet-title').textContent = `${counts.total} 位同学`;
+    // Everything on the home sheet is the current scope (国内 or 海外), same as the map.
+    const shown = counts[state.scope];
+    $('#sheet-title').textContent = `${shown} 位同学`;
     $('#sheet-summary').textContent = summaryLine(state.members.length);
-    if (!counts.total) html = '<div id="empty" class="empty"><p>这个时间段还没有同学确认过位置</p><button id="expand-range" class="secondary" type="button">扩大时间范围</button></div>';
+    if (!shown) html = '<div id="empty" class="empty"><p>这个时间段还没有同学确认过位置</p><button id="expand-range" class="secondary" type="button">扩大时间范围</button></div>';
     else if (state.scope === 'world') html = countryGroups(full);
     else {
       const {inRange: fresh, others} = splitForRegion(state.members, null, 'china', state.range);
@@ -185,7 +192,6 @@ function renderSheet() {
 function countryGroups(full) {
   const groups = new Map();
   for (const member of splitForRegion(state.members, null, 'world', state.range).inRange) {
-    if (member.location.country_code === 'CHN') continue;
     const name = placeOf(member.location);
     groups.set(name, [...(groups.get(name) || []), member]);
   }
@@ -265,7 +271,7 @@ function openUpdate() {
   renderUpdate($('#update'), {me, current, today: state.boot.today, api, notify, countries: state.boot.countries || {},
     divisions: () => state.divisions, locate: locateCity,
     todayInRange: () => inRange(`${state.boot.today}T12:00:00+08:00`, state.range),
-    onDone: async () => {await refresh(); goHome();},
+    onDone: async () => {closeUpdate(); await refresh(); goHome();},
     onNotMe: () => run(async () => {await api('logout', 'POST', {}); goHome(); await boot(); authDialog('login');})});
 }
 // Device location → GCJ-02 → reverse geocode → prefecture city from the division list.
@@ -288,7 +294,11 @@ function locateCity() {
   });
 }
 function leaveUpdate() {
-  state.view = state.view.back || {type: 'home'};
+  closeUpdate();
+  const back = state.view.back || {type: 'home'};
+  // A member detail is not part of render(): rebuild it (and its footprint map) explicitly.
+  if (back.type === 'member') {state.view = back.back || {type: 'home'}; run(() => memberDialog(back.id)); return;}
+  state.view = back;
   render(); sheet.snap(state.view.type === 'home' ? 'peek' : 'half');
 }
 function leaveMember() {

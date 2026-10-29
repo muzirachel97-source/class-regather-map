@@ -5,6 +5,9 @@ import {presetRange} from './filter.js';
 // real-time scale, and 1y / 3y / all presets. Month indexes are year*12 + month-1.
 
 export const tickPercent = (month, earliest, now) => now === earliest ? 100 : Math.round((month - earliest) / (now - earliest) * 1000) / 10;
+// The axis spans the data, the current selection and at least the 3-year preset, so no
+// handle can sit off the track.
+export const axisStart = (firstData, now, rangeFrom) => Math.min(firstData, rangeFrom, now - 36);
 export const monthLabel = month => `${Math.floor(month / 12)}.${String(month % 12 + 1).padStart(2, '0')}`;
 
 const PRESETS = [['1y', '近 1 年'], ['3y', '近 3 年'], ['all', '全部']];
@@ -12,7 +15,7 @@ const PRESETS = [['1y', '近 1 年'], ['3y', '近 3 年'], ['all', '全部']];
 export function mountRange(el, {today, earliest, range, preset, onChange}) {
   const now = Number(today.slice(0, 4)) * 12 + Number(today.slice(5, 7)) - 1;
   const first = Number(earliest.slice(0, 4)) * 12 + Number(earliest.slice(5, 7)) - 1;
-  const start = Math.min(first, now);
+  const start = axisStart(Math.min(first, now), now, range.from);
   const toValue = () => range.to === null ? now : range.to;
   const set = (next, nextPreset = null) => {
     range = next; preset = nextPreset;

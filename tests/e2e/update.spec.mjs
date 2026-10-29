@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {bootToday, unlock} from './helpers.mjs';
+import {bootToday, dragSheet, unlock} from './helpers.mjs';
 
 // Each device profile updates its own claimed demo member (both confirmed 13 months ago),
 // because the two projects share one seeded database per run.
@@ -53,6 +53,54 @@ test('a move earlier than the current stay is rejected and keeps the input', asy
   await page.locator('#update-save').click();
   await expect(page.locator('#update .field-error')).toContainText(`比你在${who.city}的开始时间还早`);
   await expect(page.locator('#place-input')).toHaveValue(/深圳/);
+});
+
+test('the form is locked while saving and keeps the input when saving fails', async ({page}) => {
+  await loginAsOwnMember(page);
+  await page.locator('#me-btn').click();
+  await page.locator('#update-move').click();
+  await page.locator('#place-input').fill('成');
+  await page.locator('.sugg [data-place]', {hasText: '成都'}).first().click();
+  let release;
+  await page.route('**/api/members/*/locations', route => new Promise(resolve => {
+    release = () => resolve(route.fulfill({status: 500, contentType: 'application/json', body: '{"error":"服务暂时不可用"}'}));
+  }));
+  await page.locator('#update-save').click();
+  await expect(page.locator('#update-save')).toHaveText('正在保存…');
+  await expect(page.locator('#update-save')).toBeDisabled();
+  await expect(page.locator('#place-input')).toBeDisabled();
+  await expect(page.locator('#update [data-mode="world"]')).toBeDisabled();
+  release();
+  await expect(page.locator('#update .field-error')).toContainText('没保存成功，内容已保留');
+  await expect(page.locator('#place-input')).toHaveValue('成都');
+  await expect(page.locator('#update-save')).toBeEnabled();
+});
+
+test('a late device location does not overwrite a later manual choice', async ({page, context}) => {
+  await context.grantPermissions(['geolocation']);
+  await context.setGeolocation({latitude: 22.54, longitude: 114.06});
+  await loginAsOwnMember(page);
+  await page.locator('#me-btn').click();
+  await page.locator('#update-move').click();
+  await page.locator('#locate').click();
+  await page.locator('#update [data-mode="world"]').click();
+  await page.locator('#place-input').fill('日本');
+  await page.locator('.sugg [data-place]', {hasText: '日本'}).first().click();
+  await page.waitForTimeout(4000);  // long enough for convertFrom + reverse geocoding to land
+  await expect(page.locator('#place-input')).toHaveValue('日本');
+});
+
+test('closing the update view returns to the member detail it came from', async ({page}) => {
+  await loginAsOwnMember(page);
+  await dragSheet(page, -700);
+  await page.locator('#account #my-profile').click();
+  await expect(page.locator('#member-detail')).toBeVisible();
+  await dragSheet(page, 350);  // pull the detail down so the top bar (and 我) is reachable
+  await page.locator('#me-btn').click();
+  await expect(page.locator('#update')).toBeVisible();
+  await page.locator('#region-close').click();
+  await expect(page.locator('#member-detail')).toBeVisible();
+  await expect(page.locator('#sheet-title')).toHaveText(who.name);
 });
 
 test('still here refreshes the confirmation and clears the dot', async ({page}) => {

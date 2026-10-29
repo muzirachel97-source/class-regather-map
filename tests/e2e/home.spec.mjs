@@ -9,15 +9,17 @@ test('default range is the last 3 years', async ({page}) => {
   await expect(page.locator('#range [data-preset="3y"]')).toHaveClass(/\bon\b/);
 });
 
-test('counts agree across presets: header, sheet title and map dots', async ({page}) => {
+test('counts agree across presets and scopes: header, sheet title and map dots', async ({page}) => {
   await unlock(page);
   for (const preset of ['1y', '3y', 'all']) {
     await page.locator(`#range [data-preset="${preset}"]`).click();
     const china = await numberIn(page.locator('#count-china'));
-    const world = await numberIn(page.locator('#count-world'));
-    await expect(page.locator('#sheet-title')).toHaveText(`${china + world} 位同学`);
+    await expect(page.locator('#sheet-title')).toHaveText(`${china} 位同学`);
     await expect.poll(() => markerSum(page)).toBe(china);
   }
+  await page.locator('#scope-seg [data-scope="world"]').click();
+  const world = await numberIn(page.locator('#count-world'));
+  await expect(page.locator('#sheet-title')).toHaveText(`${world} 位同学`);
 });
 
 test('an empty range offers to widen it', async ({page}) => {

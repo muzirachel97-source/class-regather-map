@@ -38,7 +38,14 @@ export function placeSearch(input, list, {mode, divisions, countries, onPick}) {
   return {redraw: draw};
 }
 
+let teardown = () => {};
+
 export function renderUpdate(root, ctx) {
+  teardown();
+  // Everything this view hangs on window/visualViewport goes away with it.
+  const lifetime = new AbortController();
+  let locateToken = 0;  // bumped by any newer choice, so a late device location is ignored
+  teardown = () => {lifetime.abort(); locateToken++;};
   const {me, current, today, api, notify, onDone, onNotMe} = ctx;
   const where = current ? (current.country_code === 'CHN' ? shortName(current.city_name) || shortName(current.province_name) : current.country_name) : '';
   const who = `<p class="who">正在更新：<b>${escapeHTML(me.name)}</b><button type="button" class="text-button">不是我</button></p>`;
@@ -73,8 +80,11 @@ export function renderUpdate(root, ctx) {
     const input = root.querySelector('#place-input'), save = root.querySelector('#update-save'), error = root.querySelector('.field-error');
     const sync = () => {save.disabled = !picked; root.querySelector('.hint').hidden = !!picked;};
     const search = placeSearch(input, root.querySelector('.sugg'), {mode: () => mode, divisions: ctx.divisions, countries: ctx.countries,
-      onPick: item => {picked = item; sync();}});
+      onPick: item => {if (item) locateToken++; picked = item; sync();}});
+    const controls = () => root.querySelectorAll('input, [data-mode], #locate, #moved-at, #update-save');
+    const setBusy = busy => {controls().forEach(control => {control.disabled = busy;}); if (!busy) sync();};
     root.querySelectorAll('[data-mode]').forEach(button => button.onclick = () => {
+      locateToken++;
       mode = button.dataset.mode; picked = null; input.value = ''; sync(); search.redraw();
       root.querySelectorAll('[data-mode]').forEach(other => other.classList.toggle('on', other === button));
       input.placeholder = mode === 'china' ? '输入城市名，比如 深圳' : '输入国家名，比如 日本';
@@ -83,10 +93,13 @@ export function renderUpdate(root, ctx) {
     root.querySelector('#moved-at').onclick = event => monthPicker(event.currentTarget.closest('.opt'), {
       value: movedAt ?? monthIndex(today), min: monthIndex(today) - 12 * 15, max: monthIndex(today),
       onPick: month => {movedAt = month; event.target.textContent = `${Math.floor(month / 12)}.${String(month % 12 + 1).padStart(2, '0')}`; error.textContent = '';}});
-    root.querySelector('#locate').onclick = () => ctx.locate().then(city => {
-      if (!city) return;
+    root.querySelector('#locate').onclick = () => {
+      const token = ++locateToken;
+      ctx.locate().then(city => {
+      if (!city || token !== locateToken || !input.isConnected) return;
       picked = {kind: 'china', city, label: shortName(city.name)}; input.value = picked.label; sync();
-    }, err => notify(err.message, true));
+      }, err => {if (token === locateToken) notify(err.message, true);});
+    };
 
     save.onclick = () => {
       const started = movedAt === null ? today : monthStart(movedAt);
@@ -96,18 +109,23 @@ export function renderUpdate(root, ctx) {
         ? {country_code: 'CHN', province_code: municipalities.has(picked.city.adcode) ? picked.city.adcode : picked.city.province.adcode,
           city_code: picked.city.adcode, city_name: picked.city.name}
         : {country_code: picked.code, city_name: ''};
-      run(save, async () => {
-        await api(`members/${me.id}/locations`, 'POST', {...body, started_on: started, note: root.querySelector('#update-note').value.trim(), close_previous: true});
-        notify(`已更新到${picked.label} · 最近确认：今天${ctx.todayInRange() ? '' : '（不在当前筛选的时间段里）'}`);
+      // Freeze what is being saved: the form is locked, and the toast names this place.
+      const label = picked.label, payload = {...body, started_on: started, note: root.querySelector('#update-note').value.trim(), close_previous: true};
+      setBusy(true); save.textContent = '正在保存…'; error.textContent = '';
+      api(`members/${me.id}/locations`, 'POST', payload).then(async () => {
+        notify(`已更新到${label} · 最近确认：今天${ctx.todayInRange() ? '' : '（不在当前筛选的时间段里）'}`);
         await onDone();
-      }, '正在保存…', () => {error.textContent = '没保存成功，内容已保留。可以再点一次保存重试。';});
+      }, () => {
+        setBusy(false); save.textContent = '保存';
+        error.textContent = '没保存成功，内容已保留。可以再点一次保存重试。';
+      });
     };
     // With the keyboard up the sheet is short: lift the field to the top so its suggestions
     // sit between it and the save bar instead of underneath the bar.
     const lift = () => {if (input.isConnected && document.activeElement === input) input.closest('label').scrollIntoView({block: 'start'});};
     input.addEventListener('input', lift);
     input.addEventListener('focus', lift);
-    for (const target of [window, window.visualViewport].filter(Boolean)) target.addEventListener('resize', () => requestAnimationFrame(lift));
+    for (const target of [window, window.visualViewport].filter(Boolean)) target.addEventListener('resize', () => requestAnimationFrame(lift), {signal: lifetime.signal});
     input.focus();
   }
 
@@ -125,3 +143,5 @@ export function renderUpdate(root, ctx) {
 
   if (current) ask(); else move();
 }
+
+export const closeUpdate = () => teardown();

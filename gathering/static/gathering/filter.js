@@ -48,12 +48,12 @@ export function consistentCounts(members, range) {
 
 const newestFirst = (a, b) => (b.location.confirmed_at || '').localeCompare(a.location.confirmed_at || '');
 
-// key === null lists everyone with a location (the home "recent updates" list).
+// key === null lists everyone of that level (the home list); a key narrows to one region.
 export function splitForRegion(members, key, level, range) {
   const inside = [], others = [];
   for (const member of members) {
     const loc = member.location;
-    if (!loc || key !== null && (levelOf(loc) !== level || memberKey(loc, level) !== key)) continue;
+    if (!loc || levelOf(loc) !== level || key !== null && memberKey(loc, level) !== key) continue;
     (inRange(loc.confirmed_at, range) ? inside : others).push(member);
   }
   return {inRange: inside.sort(newestFirst), others: others.sort(newestFirst)};
