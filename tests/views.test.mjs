@@ -27,3 +27,8 @@ test('region and section copy follow the spec', () => {
   assert.equal(sectionTitle(true), '这段时间确认过');
   assert.equal(summaryLine(66), '这段时间确认过位置 · 全班 66 人');
 });
+
+test('a member without a location says so instead of a confirm date', () => {
+  const html = memberRow({id: 3, name: '夏禾', bio: '', location: null}, range, {showPlace: true});
+  assert.match(html, /还没填位置/);
+});

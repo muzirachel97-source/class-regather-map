@@ -60,6 +60,10 @@ export function renderUpdate(root, ctx) {
       await api(`members/${me.id}/locations/${current.id}/confirm`, 'POST', {version: current.version});
       notify(`已确认还在${where}`);
       await onDone();
+    }, null, err => {
+      // Usually a version conflict: say why, then reload so a retry sends the fresh version.
+      notify(err.message, true);
+      ctx.onStale();
     });
     root.querySelector('#update-move').onclick = move;
   }
@@ -115,9 +119,9 @@ export function renderUpdate(root, ctx) {
       api(`members/${me.id}/locations`, 'POST', payload).then(async () => {
         notify(`已更新到${label} · 最近确认：今天${ctx.todayInRange() ? '' : '（不在当前筛选的时间段里）'}`);
         await onDone();
-      }, () => {
+      }, err => {
         setBusy(false); save.textContent = '保存';
-        error.textContent = '没保存成功，内容已保留。可以再点一次保存重试。';
+        error.textContent = `没保存成功：${err.message}。内容已保留，可以再点一次保存重试。`;
       });
     };
     // With the keyboard up the sheet is short: lift the field to the top so its suggestions

@@ -47,7 +47,12 @@ const range = presetRange('3y', '2026-10-29', '2015-09-01');
 function withDocument(run) {
   const old = globalThis.document;
   globalThis.document = {createElement: tag => ({tag, setAttribute(k, v) {this[k] = v;}, addEventListener(name, fn) {this['on' + name] = fn;}})};
-  try {return run();} finally {globalThis.document = old;}
+  const restore = () => {globalThis.document = old;};
+  let result;
+  try {result = run();} catch (error) {restore(); throw error;}
+  if (result?.then) return result.finally(restore);  // async tests keep the stub until they finish
+  restore();
+  return result;
 }
 const countOf = marker => Number(marker.content.innerHTML.match(/class="d"[^>]*>(\d+)</)[1]);
 const labelOf = marker => marker.content.innerHTML.match(/class="nm">([^<]*)</)[1];
@@ -161,3 +166,26 @@ test('people without a known position are reported, never dropped silently or th
   map.update([{id: 1, name: 'a', location: loc('420100')}], range);
   assert.deepEqual(reports.at(-1), 0);
 }));
+
+test('the first view re-frames once district centres arrive, unless the user already moved the map', async () => {
+  await withDocument(async () => {
+    let resolve;
+    const later = new Promise(r => {resolve = r;});
+    const map = new ClassMap(stubSDK(), 'map', {divisions: later});
+    const coordless = [{id: 1, name: 'a', location: loc('420100')}, {id: 2, name: 'b', location: loc('430100')}];
+    map.update(coordless, range);
+    map.fit();
+    assert.equal(map.map.fits.length, 0, 'nothing placeable yet');
+    resolve(divisions); await later; await null;
+    assert.equal(map.map.fits.length, 1);
+
+    let resolve2;
+    const later2 = new Promise(r => {resolve2 = r;});
+    const touched = new ClassMap(stubSDK(), 'map', {divisions: later2});
+    touched.update(coordless, range);
+    touched.fit();
+    touched.map.events.dragstart();
+    resolve2(divisions); await later2; await null;
+    assert.equal(touched.map.fits.length, 0);
+  });
+});

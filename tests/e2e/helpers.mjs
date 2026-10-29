@@ -1,9 +1,19 @@
 import {expect} from '@playwright/test';
 
+// The app throttles unlock attempts per IP; a full two-device run would trip it, so one
+// unlocked session is reused until it stops working (a login rotates the session key).
+let gateSession = null;
 export async function unlock(page) {
+  const shown = () => expect(page.locator('#gate, #app').filter({visible: true}).first()).toBeVisible();
+  if (gateSession && !(await page.context().cookies()).some(cookie => cookie.name === 'sessionid')) await page.context().addCookies(gateSession);
   await page.goto('/c/demo/');
-  await page.getByLabel('班级查看码').fill('demo-password-123');
-  await page.getByRole('button', {name: '打开班级地图'}).click();
+  await shown();
+  if (await page.locator('#gate').isVisible()) {
+    await page.getByLabel('班级查看码').fill('demo-password-123');
+    await page.getByRole('button', {name: '打开班级地图'}).click();
+    await expect(page.locator('#app')).toBeVisible();
+    gateSession = (await page.context().cookies()).filter(cookie => cookie.name === 'sessionid');
+  }
   await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000});
 }
@@ -51,4 +61,45 @@ export async function openWuhan(page) {
   }
   await tapMarker(page, wuhan.locator('.d'));
   await expect(page.locator('#sheet')).toHaveAttribute('data-detent', 'half');
+}
+
+// Real touch input (CDP), for gestures where the browser's own touch handling matters.
+export async function touchDrag(page, locator, dy) {
+  const box = await locator.boundingBox();
+  const x = box.x + box.width / 2, y = box.y + box.height / 2;
+  const cdp = await page.context().newCDPSession(page);
+  const touch = (type, py) => cdp.send('Input.dispatchTouchEvent', {type, touchPoints: type === 'touchEnd' ? [] : [{x, y: py}]});
+  await touch('touchStart', y);
+  for (let i = 1; i <= 10; i++) {await touch('touchMove', y + dy * i / 10); await page.waitForTimeout(40);}
+  await page.waitForTimeout(150);
+  await touch('touchEnd', y + dy);
+  await page.waitForTimeout(500);
+}
+
+// Log in as a demo member, reusing one session per account across tests: the app's own
+// login throttle (15 tries per account / 15 min) would otherwise trip during a full run.
+const sessions = new Map();
+export async function loginAs(page, name) {
+  await unlock(page);
+  const cached = sessions.get(name);
+  if (cached) {
+    await page.context().addCookies(cached);
+    await page.reload();
+    const me = await page.evaluate(async () => (await (await fetch('api/bootstrap', {credentials: 'same-origin'})).json()).me);
+    if (me?.name === name) {await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000}); return;}
+    sessions.delete(name);  // logged out by an earlier test ("不是我"): log in again
+    await page.context().clearCookies();
+    await unlock(page);
+  }
+  await page.evaluate(async name => {
+    const token = document.cookie.split('; ').find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
+    const response = await fetch('api/login', {method: 'POST', credentials: 'same-origin',
+      headers: {'Content-Type': 'application/json', 'X-CSRFToken': decodeURIComponent(token)},
+      body: JSON.stringify({name, password: 'demo-password-123'})});
+    if (!response.ok) throw new Error(await response.text());
+  }, name);
+  sessions.set(name, (await page.context().cookies()).filter(cookie => cookie.name === 'sessionid'));
+  await page.reload();
+  await expect(page.locator('#app')).toBeVisible();
+  await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000});
 }

@@ -81,13 +81,15 @@ class ConfirmTests(TestCase):
         self.assertEqual(loc.note, '管理员改的')
         self.assertEqual(loc.confirmed_at, before)
 
-    def test_admin_create_for_other_member_leaves_null(self):
+    def test_admin_create_for_other_member_counts_from_started_on(self):
+        # Spec 5.7: not self-confirmed → as of started_on, so the stay is still shown under 全部.
         self.auth(admin=True)
+        local_start = '2020-01-01T00:00:00+08:00'
         response = self.post(f'members/{self.unclaimed.pk}/locations', stay())
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertIsNone(response.json()['location']['confirmed_at'])
+        self.assertEqual(response.json()['location']['confirmed_at'], local_start)
         response = self.post(f'members/{self.member.pk}/locations', stay())
-        self.assertIsNone(response.json()['location']['confirmed_at'])
+        self.assertEqual(response.json()['location']['confirmed_at'], local_start)
 
     def test_admin_create_own_location_counts_as_self(self):
         self.auth(admin=True)
@@ -95,13 +97,15 @@ class ConfirmTests(TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertRecent(Location.objects.get(member=self.manager).confirmed_at)
 
-    def test_import_leaves_confirmed_at_null(self):
-        # Includes the admin's own row: imports never count as self-confirmation.
+    def test_import_counts_from_started_on(self):
+        # Includes the admin's own row: imports never count as self-confirmation (spec 5.7).
         rows = [{'student_code': '003', 'name': '王同学'} | stay(),
                 {'student_code': '000', 'name': '班长'} | stay()]
         import_rows(self.room, rows, self.admin)
-        self.assertEqual(Location.objects.filter(member__classroom=self.room).count(), 2)
-        self.assertFalse(Location.objects.filter(confirmed_at__isnull=False).exists())
+        stays = Location.objects.filter(member__classroom=self.room)
+        self.assertEqual(stays.count(), 2)
+        for loc in stays:
+            self.assertEqual(timezone.localtime(loc.confirmed_at).isoformat(), '2020-01-01T00:00:00+08:00')
 
     def test_import_update_keeps_existing_confirmed_at(self):
         loc = save_location(self.manager, stay(), self.admin)
@@ -150,6 +154,7 @@ class ConfirmTests(TestCase):
 
     def test_confirm_other_member_forbidden(self):
         loc = save_location(self.unclaimed, stay(), self.admin)
+        before = loc.confirmed_at
         self.auth()
         self.assertEqual(self.confirm(self.unclaimed, loc).status_code, 403)
         # A guest who only unlocked the class map is not anyone's "self" either.
@@ -157,7 +162,7 @@ class ConfirmTests(TestCase):
         self.post('unlock', {'password': 'class-password'})
         self.assertEqual(self.confirm(self.unclaimed, loc).status_code, 403)
         loc.refresh_from_db()
-        self.assertIsNone(loc.confirmed_at)
+        self.assertEqual(loc.confirmed_at, before)
 
     def test_confirm_location_id_cannot_cross_members(self):
         other = save_location(self.unclaimed, stay(), self.admin)
@@ -202,8 +207,7 @@ class ConfirmTests(TestCase):
         # Local (+08:00) ISO so the browser can read the month straight from the string (filter.js).
         self.assertEqual(rows[self.member.pk]['location']['confirmed_at'], timezone.localtime(mine.confirmed_at).isoformat())
         self.assertTrue(rows[self.member.pk]['location']['confirmed_at'].endswith('+08:00'))
-        self.assertIn('confirmed_at', rows[self.unclaimed.pk]['location'])
-        self.assertIsNone(rows[self.unclaimed.pk]['location']['confirmed_at'])
+        self.assertEqual(rows[self.unclaimed.pk]['location']['confirmed_at'], '2020-01-01T00:00:00+08:00')  # admin-made: started_on
         detail = self.client.get(self.base + f'members/{self.member.pk}').json()
         self.assertEqual(detail['locations'][0]['confirmed_at'], timezone.localtime(mine.confirmed_at).isoformat())
 

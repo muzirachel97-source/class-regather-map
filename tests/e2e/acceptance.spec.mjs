@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {dragSheet, openWuhan, unlock} from './helpers.mjs';
+import {dragSheet, loginAs, openWuhan, unlock} from './helpers.mjs';
 
 // Screens compared by hand against the B v3 mockups (class-regather-review/board/b3-*.png).
 // Read-only: nothing here saves, so later specs still see the seeded data.
@@ -23,13 +23,7 @@ test('six screens for visual review', async ({page}, info) => {
   await settle(page);
   await shot(page, info, 4);                        // ④ overseas
 
-  await page.evaluate(async () => {
-    const token = document.cookie.split('; ').find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
-    await fetch('api/login', {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json', 'X-CSRFToken': decodeURIComponent(token)},
-      body: JSON.stringify({name: '林晓', password: 'demo-password-123'})});
-  });
-  await page.reload();
-  await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000});
+  await loginAs(page, info.project.name === 'se' ? '陈雨' : '林晓');
   await page.locator('#me-btn').click();
   await settle(page);
   await shot(page, info, 5);                        // ⑤ update: still here?

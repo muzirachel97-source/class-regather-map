@@ -3,14 +3,14 @@ import {ClassMap, chinaDivisions, createFootprintMap, loadMap} from './map.js';
 import {consistentCounts, inRange, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
 import {createSheet} from './sheet.js';
 import {monthLabel, mountRange} from './range.js';
-import {memberRow, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
+import {matches, memberRow, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
 import {closeUpdate, placeSearch, renderUpdate} from './update.js';
 import {dayPicker} from './pickers.js';
 import {buildEntryLink, readEntryLink} from './links.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const state = {scope: 'china', view: {type: 'home'}, range: null, preset: '3y', earliest: '', members: [], boot: null};
+const state = {scope: 'china', view: {type: 'home'}, search: '', range: null, preset: '3y', earliest: '', members: [], boot: null};
 let map, sheet, rangeControl, footprintMap, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
 const apiRoot = new URL('api/', location.href);
 const orderMembers = createMemberOrder();
@@ -164,6 +164,13 @@ function renderSheet() {
   $('#range').hidden = !home; $('#legend').hidden = !home; $('#region-close').hidden = home; $('#account').hidden = !home;
   const counts = consistentCounts(state.members, state.range);
   let html;
+  $('#search-box').hidden = !home;
+  if (home && state.search.trim()) {
+    // Search covers everyone — any scope, any confirm time, no location yet — so nobody is unreachable.
+    const found = state.members.filter(member => matches(member, state.search.trim()));
+    $('#list').innerHTML = section('搜索结果', found.length) + (rows(found, {showPlace: true}) || '<p class="empty-small">没有找到。</p>');
+    return;
+  }
   if (home) {
     // Everything on the home sheet is the current scope (国内 or 海外), same as the map.
     const shown = counts[state.scope];
@@ -173,7 +180,9 @@ function renderSheet() {
     else if (state.scope === 'world') html = countryGroups(full);
     else {
       const {inRange: fresh, others} = splitForRegion(state.members, null, 'china', state.range);
+      const unplaced = state.members.filter(member => !member.location);
       html = full ? section(sectionTitle(true), fresh.length) + rows(fresh, {showPlace: true}) + (others.length ? section(sectionTitle(false), others.length, '可能已经搬走了') + rows(others, {showPlace: true}) : '')
+          + (unplaced.length ? section('还没填位置', unplaced.length) + rows(unplaced) : '')
         : section('最近更新', fresh.length) + rows(fresh.slice(0, 3), {showPlace: true}) + (fresh.length > 3 || others.length ? moreRow('展开全部', `还有 ${Math.max(0, fresh.length - 3)} 人`) : '');
     }
   } else {
@@ -272,6 +281,7 @@ function openUpdate() {
     divisions: () => state.divisions, locate: locateCity,
     todayInRange: () => inRange(`${state.boot.today}T12:00:00+08:00`, state.range),
     onDone: async () => {closeUpdate(); await refresh(); goHome();},
+    onStale: () => run(async () => {await refresh(); openUpdate();}),
     onNotMe: () => run(async () => {await api('logout', 'POST', {}); goHome(); await boot(); authDialog('login');})});
 }
 // Device location → GCJ-02 → reverse geocode → prefecture city from the division list.
@@ -505,6 +515,7 @@ bindForm('#unlock-form', async data => {await api('unlock', 'POST', data); await
 document.querySelectorAll('[data-scope]').forEach(button => button.onclick = () => setScope(button.dataset.scope));
 // A date picker opened from the peeking sheet would fall off the bottom of the screen.
 $('#range').addEventListener('click', event => {if (event.target.closest('[data-end]') && sheet.detent !== 'full') sheet.snap('full');}, true);
+$('#search').addEventListener('input', event => {state.search = event.target.value; renderSheet();});
 $('#region-close').onclick = () => state.view.type === 'member' ? leaveMember() : state.view.type === 'update' ? leaveUpdate() : goHome();
 $('#range-chip').onclick = () => {goHome(); $('#range').scrollIntoView({block: 'nearest'});};
 $('#me-btn').onclick = () => state.boot.me ? openUpdate() : authDialog('login');

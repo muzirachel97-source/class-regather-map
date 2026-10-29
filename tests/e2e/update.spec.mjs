@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {bootToday, dragSheet, unlock} from './helpers.mjs';
+import {bootToday, dragSheet, loginAs, unlock} from './helpers.mjs';
 
 // Each device profile updates its own claimed demo member (both confirmed 13 months ago),
 // because the two projects share one seeded database per run.
@@ -8,19 +8,7 @@ let who;
 test.beforeEach(({}, info) => {who = PEOPLE[info.project.name];});
 
 // Login is set up through the API: the login form itself is upstream code, not under test here.
-async function loginAsOwnMember(page) {
-  await unlock(page);
-  await page.evaluate(async name => {
-    const token = document.cookie.split('; ').find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
-    const response = await fetch('api/login', {method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json', 'X-CSRFToken': decodeURIComponent(token)},
-      body: JSON.stringify({name, password: 'demo-password-123'})});
-    if (!response.ok) throw new Error(await response.text());
-  }, who.name);
-  await page.reload();
-  await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000});
-}
+const loginAsOwnMember = page => loginAs(page, who.name);
 
 test.describe.configure({mode: 'serial'});
 
@@ -71,7 +59,8 @@ test('the form is locked while saving and keeps the input when saving fails', as
   await expect(page.locator('#place-input')).toBeDisabled();
   await expect(page.locator('#update [data-mode="world"]')).toBeDisabled();
   release();
-  await expect(page.locator('#update .field-error')).toContainText('没保存成功，内容已保留');
+  await expect(page.locator('#update .field-error')).toContainText('没保存成功：服务暂时不可用');
+  await expect(page.locator('#update .field-error')).toContainText('内容已保留');
   await expect(page.locator('#place-input')).toHaveValue('成都');
   await expect(page.locator('#update-save')).toBeEnabled();
 });
@@ -101,6 +90,24 @@ test('closing the update view returns to the member detail it came from', async 
   await page.locator('#region-close').click();
   await expect(page.locator('#member-detail')).toBeVisible();
   await expect(page.locator('#sheet-title')).toHaveText(who.name);
+});
+
+test('a stale confirm (409) shows the reason and reloads, so the retry uses fresh data', async ({page}) => {
+  await loginAsOwnMember(page);
+  await page.locator('#me-btn').click();
+  let calls = 0;
+  await page.route('**/locations/*/confirm', route => {
+    calls++;
+    return route.fulfill({status: 409, contentType: 'application/json', body: '{"error":"记录已被更新，请刷新后再确认。"}'});
+  });
+  const snapshots = [];
+  page.on('request', request => {if (request.url().includes('/api/snapshot')) snapshots.push(request.url());});
+  await page.locator('#update-confirm').click();
+  await expect(page.locator('#toast')).toContainText('记录已被更新');
+  await expect.poll(() => snapshots.length).toBeGreaterThan(0);
+  await expect(page.locator('#update-confirm')).toBeEnabled();
+  expect(calls).toBe(1);
+  await page.unroute('**/locations/*/confirm');
 });
 
 test('still here refreshes the confirmation and clears the dot', async ({page}) => {

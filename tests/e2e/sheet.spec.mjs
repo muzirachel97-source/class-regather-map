@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {detent, dragSheet, unlock} from './helpers.mjs';
+import {detent, dragSheet, touchDrag, unlock} from './helpers.mjs';
 
 test('drag up from peek snaps to half then full, and back down', async ({page}) => {
   await unlock(page);
@@ -28,4 +28,13 @@ test('no native pickers on the main page', async ({page}) => {
   await unlock(page);
   await dragSheet(page, -700);
   expect(await page.locator('select, input[type=date], input[type=time], input[type=month], input[type=color]').count()).toBe(0);
+});
+
+test('a finger on the header pulls a full sheet back down; the handle is a 44px target', async ({page}) => {
+  await unlock(page);
+  await dragSheet(page, -700);
+  expect(await detent(page)).toBe('full');
+  await touchDrag(page, page.locator('#sheet-title'), 420);
+  expect(await detent(page)).not.toBe('full');
+  expect((await page.locator('#sheet .grab').boundingBox()).height).toBeGreaterThanOrEqual(44);
 });

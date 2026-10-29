@@ -3,7 +3,7 @@ import hashlib
 import io
 import re
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.hashers import make_password
@@ -171,10 +171,12 @@ def save_location(member, data, actor, location_id=None, check_version=True, con
     for key, value in values.items():
         setattr(location, key, value)
     location.updated_by = actor
-    # Only the member saving their own stay confirms it; otherwise new rows stay
-    # unconfirmed and edits keep the previous value.
+    # Only the member saving their own stay confirms it; others' edits keep the previous value.
     if confirm and is_self(member, actor):
         location.confirmed_at = timezone.now()
+    elif not existing:
+        # Spec 5.7: a stay nobody self-confirmed counts as known on its start date.
+        location.confirmed_at = timezone.make_aware(datetime.combine(location.started_on, time.min))
     location.full_clean()
     location.save()
     audit(member.classroom, actor, 'location.update' if existing else 'location.create', member, location_id=location.pk)

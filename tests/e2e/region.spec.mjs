@@ -56,3 +56,14 @@ test('a row opens the member detail with the footprint map', async ({page}) => {
   await expect(page.locator('#member-detail h2')).toBeVisible();
   await expect(page.locator('#footprint-map')).toBeVisible();
 });
+
+test('search finds anyone, including people with no location yet', async ({page}) => {
+  await unlock(page);
+  await dragSheet(page, -220);
+  await page.locator('#search').fill('夏禾');
+  await expect(page.locator('#sheet-body .mem')).toHaveCount(1);
+  await expect(page.locator('#sheet-body .mem')).toContainText('还没填位置');
+  await page.locator('#search').fill('');
+  await dragSheet(page, -700);
+  await expect(page.locator('#sheet-body .sec').last()).toContainText('还没填位置 · 1');
+});

@@ -64,6 +64,8 @@ export class ClassMap {
       showIndoorMap: false, isHotspot: false, mapStyle: 'amap://styles/whitesmoke'});
     this.map.addControl(new A.Scale());
     this.setDivisions(divisions);
+    this.map.on('dragstart', () => {this.userMoved = true;});
+    this.map.on('touchstart', () => {this.userMoved = true;});
     this.refreshMarkers = () => this.renderMarkers();
     for (const event of markerEvents) this.map.on(event, this.refreshMarkers);
     this.map.on('click', event => {
@@ -75,7 +77,9 @@ export class ClassMap {
     this.buildLayer();
   }
   setDivisions(divisions) {
-    if (divisions?.then) divisions.then(loaded => {this.divisions = loaded; this.renderMarkers();}, () => {});
+    // Most real records carry a city code but no coordinates, so the first frame only knows a
+    // few dots; once centres arrive, frame again unless the user has taken over the map.
+    if (divisions?.then) divisions.then(loaded => {this.divisions = loaded; this.renderMarkers(); if (this.wantsFit && !this.userMoved) this.fit();}, () => {});
     else {this.divisions = divisions; this.renderMarkers();}
   }
     setLevel(level) {
@@ -188,6 +192,7 @@ export class ClassMap {
   // AMap 1.4 setFitView margins are [top, bottom, left, right] (not CSS order).
   padding() {return [110, this.inset + 20, 40, 40];}
   fit() {
+    this.wantsFit = true;
     if (!this.markers.length) return;
     // AMap 1.4 cannot zoom out past 3, so continents apart do not fit one phone screen;
     // centring on their midpoint would show neither. Centre on the biggest group instead.

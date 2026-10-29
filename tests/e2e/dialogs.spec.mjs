@@ -1,22 +1,15 @@
 import {test, expect} from '@playwright/test';
-import {dragSheet, unlock} from './helpers.mjs';
+import {dragSheet, loginAs, unlock} from './helpers.mjs';
 
 const NATIVE = 'select, input[type=date], input[type=time], input[type=month], input[type=color]';
 const nativeCount = page => page.locator(NATIVE).count();
+// Every tappable thing in a dialog is a real 44px target (spec 4).
+const smallButtons = page => page.locator('#modal button:visible').evaluateAll(buttons =>
+  buttons.filter(b => b.getBoundingClientRect().height < 44).map(b => b.textContent.trim()));
 
 // 林晓 (member 001) is demo-admin's member, so this login also opens admin dialogs.
-async function loginAdmin(page, {alreadyUnlocked = false} = {}) {
-  if (!alreadyUnlocked) await unlock(page);
-  await page.evaluate(async () => {
-    const token = document.cookie.split('; ').find(c => c.startsWith('csrftoken='))?.split('=')[1] || '';
-    const response = await fetch('api/login', {method: 'POST', credentials: 'same-origin',
-      headers: {'Content-Type': 'application/json', 'X-CSRFToken': decodeURIComponent(token)},
-      body: JSON.stringify({name: '林晓', password: 'demo-password-123'})});
-    if (!response.ok) throw new Error(await response.text());
-  });
-  await page.reload();
-  await expect(page.locator('#app')).toBeVisible();
-  await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000});
+async function loginAdmin(page) {
+  await loginAs(page, '林晓');
   await dragSheet(page, -700);
 }
 
@@ -28,11 +21,12 @@ test('every dialog is free of native pickers', async ({page}) => {
   expect(await nativeCount(page)).toBe(0);
   await page.locator('#modal-close').click();
 
-  await loginAdmin(page, {alreadyUnlocked: true});
+  await loginAdmin(page);
   for (const id of ['#my-password', '#admin-open']) {
     await page.locator(`#account ${id}`).click();
     await expect(page.locator('#modal')).toBeVisible();
     expect(await nativeCount(page), id).toBe(0);
+    expect(await smallButtons(page), id).toEqual([]);
     await page.locator('#modal-close').click();
   }
   await page.locator('#account #admin-open').click();
@@ -44,6 +38,7 @@ test('every dialog is free of native pickers', async ({page}) => {
   await page.locator('#add-location').click();
   await expect(page.locator('#location-form')).toBeVisible();
   expect(await nativeCount(page), 'location').toBe(0);
+  expect(await smallButtons(page), 'location').toEqual([]);
 });
 
 test('history editing uses the city search and the day picker', async ({page}, info) => {
@@ -65,4 +60,11 @@ test('history editing uses the city search and the day picker', async ({page}, i
   await page.locator('#location-form button[type=submit]').click();
   await expect(page.locator('#toast')).toContainText('足迹已保存');
   await expect(page.locator('#member-detail')).toContainText(`${y1}-03-15 → ${y2}-07-01`);
+});
+
+test('account links are reachable from the half sheet without scrolling the list', async ({page}) => {
+  await unlock(page);
+  const {dragSheet: drag} = await import('./helpers.mjs');
+  await drag(page, -220);
+  await expect(page.locator('#account #auth-open')).toBeInViewport();
 });

@@ -19,11 +19,18 @@ export function placeOf(loc) {
 export function memberRow(member, range, {showPlace = false} = {}) {
   const loc = member.location;
   const fresh = loc && inRange(loc.confirmed_at, range);
-  const tag = !loc?.confirmed_at ? '还没确认过' : fresh ? `${loc.confirmed_at.slice(0, 4)}.${loc.confirmed_at.slice(5, 7)} 确认` : `${loc.confirmed_at.slice(0, 4)} 年的信息`;
+  const tag = !loc ? '还没填位置' : !loc.confirmed_at ? '还没确认过' : fresh ? `${loc.confirmed_at.slice(0, 4)}.${loc.confirmed_at.slice(5, 7)} 确认` : `${loc.confirmed_at.slice(0, 4)} 年的信息`;
   const line = [showPlace ? placeOf(loc) : '', loc?.label, loc?.note].filter(Boolean).join(' · ') || '没写在做什么';
   return `<button type="button" class="mem${fresh ? '' : ' old'}" data-member="${member.id}">` +
     `<span class="av" style="background:${TONES[member.id % TONES.length]}" aria-hidden="true">${escapeHTML(member.name.slice(0, 1))}</span>` +
     `<span class="tx"><b>${escapeHTML(member.name)}</b><span class="tag">${tag}</span><span class="s">${escapeHTML(line)}</span></span>${CHEVRON}</button>`;
+}
+
+// Plain-text search over what a classmate would type: name, place, label, note, bio.
+export function matches(member, query) {
+  const loc = member.location || {};
+  return [member.name, member.bio, loc.city_name, loc.province_name, loc.country_name, loc.label, loc.note]
+    .some(text => String(text || '').toLocaleLowerCase().includes(query.toLocaleLowerCase()));
 }
 
 export const section = (title, count, note = '') => `<div class="sec"><span>${title} · ${count}</span>${note ? `<small>${note}</small>` : ''}</div>`;
