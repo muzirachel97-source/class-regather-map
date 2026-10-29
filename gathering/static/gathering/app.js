@@ -1,15 +1,15 @@
 import {cityKey, createMemberOrder, municipalities, placeName} from './logic.js';
-import {ClassMap, chinaDivisions, createFootprintMap, districtChildren, loadMap} from './map.js';
+import {ClassMap, chinaDivisions, createFootprintMap, loadMap} from './map.js';
 import {consistentCounts, inRange, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
 import {createSheet} from './sheet.js';
 import {monthLabel, mountRange} from './range.js';
-import {memberRow, placeOf, regionTitle, section, sectionTitle, summaryLine} from './views.js';
-import {renderUpdate} from './update.js';
+import {memberRow, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
+import {placeSearch, renderUpdate} from './update.js';
+import {dayPicker} from './pickers.js';
 import {buildEntryLink, readEntryLink} from './links.js';
 
 const $ = selector => document.querySelector(selector);
 const escape = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
-const options = (items, selected = '') => Object.entries(items).map(([value, name]) => `<option value="${escape(value)}" ${value === selected ? 'selected' : ''}>${escape(name)}</option>`).join('');
 const state = {scope: 'china', view: {type: 'home'}, range: null, preset: '3y', earliest: '', members: [], boot: null};
 let map, sheet, rangeControl, footprintMap, modalMap, snapshotRequest = 0, toastTimer, modalGeneration = 0;
 const apiRoot = new URL('api/', location.href);
@@ -305,15 +305,17 @@ function locationDialog(member, loc = {}) {
   const isEdit = !!loc.id;
   openModal(isEdit ? '编辑这段足迹' : '留一个相聚的坐标', `<form id="location-form">
     <p class="muted">可以只填写城市，也可以在地图上选一个方便见面的点；无需填写家庭住址。</p>
-    <div class="form-grid"><label>国家<select name="country_code" id="country-select">${options(state.boot.countries, loc.country_code || 'CHN')}</select></label><label id="province-label">省级行政区<select name="province_code" id="province-select"><option value="">请选择省份</option>${options(state.boot.provinces, loc.province_code || '')}</select></label></div>
-    <label id="city-picker-label">选择城市<select id="city-select"><option value="">先选择省份，也可在下方手工填写</option></select></label>
+    <input type="hidden" name="country_code" id="country-code" value="${escape(loc.country_code || 'CHN')}"><input type="hidden" name="province_code" id="province-code" value="${escape(loc.province_code || '')}">
+    <div class="tog" role="group" aria-label="国内或海外"><button type="button" data-mode="china" class="${(loc.country_code || 'CHN') === 'CHN' ? 'on' : ''}">国内 · 城市</button><button type="button" data-mode="world" class="${(loc.country_code || 'CHN') === 'CHN' ? '' : 'on'}">海外 · 国家</button></div>
+    <label>城市或国家<input id="place-input" type="text" inputmode="search" autocomplete="off" value="${escape(placeOf(loc.country_code ? {...loc, country_name: state.boot.countries?.[loc.country_code]} : null))}" placeholder="输入城市或国家名"></label><div class="sugg"></div>
     <div class="form-grid"><label>城市名称<input name="city_name" id="city-name" maxlength="80" value="${escape(loc.city_name || '')}" placeholder="如：杭州市 / Tokyo"></label><label id="city-code-label">城市行政区代码<input name="city_code" id="city-code" maxlength="6" inputmode="numeric" value="${escape(loc.city_code || '')}" placeholder="如：330100"></label></div>
     <label>地点备注<input name="label" maxlength="120" value="${escape(loc.label || '')}" placeholder="如：滨江 / 市中心 / 常去的咖啡店"></label>
-    <div class="form-grid"><label>到达日期<input name="started_on" type="date" max="${state.boot.today}" value="${loc.started_on || state.boot.today}" required></label><label>离开日期（当天起不计入）<input name="ended_on" type="date" value="${loc.ended_on || ''}"></label></div>
+    <div class="form-grid dates"><div class="opt"><span>到达日期</span><button type="button" class="text-button" data-date="started_on">${loc.started_on || state.boot.today}</button><input type="hidden" name="started_on" value="${loc.started_on || state.boot.today}"></div>
+      <div class="opt"><span>离开日期（当天起不计入）</span><button type="button" class="text-button" data-date="ended_on">${loc.ended_on || '还在这里'}</button><input type="hidden" name="ended_on" value="${loc.ended_on || ''}"><button type="button" class="text-button" data-clear-ended ${loc.ended_on ? '' : 'hidden'}>清除</button></div></div>
     ${!isEdit ? '<label class="checkbox"><input type="checkbox" name="close_previous" checked>将上一个未结束的常住地结束于此次到达日</label>' : ''}
     <div class="point-tools"><span>可选：在地图上点选位置</span><button type="button" id="gps-button">使用设备位置</button><button type="button" id="clear-point">仅记录城市</button></div>
     <div id="editor-map" class="mini-map"><p class="map-inline-status">正在加载选点地图…</p></div><p id="point-status" class="muted small" role="status">点选后请核对城市与行政区，位置只在保存时提交。</p>
-    <details class="coordinate-details"><summary>经纬度与坐标系</summary><div class="form-grid"><label>经度<input name="longitude" id="longitude" type="number" step="0.000001" min="-180" max="180" value="${loc.longitude ?? ''}"></label><label>纬度<input name="latitude" id="latitude" type="number" step="0.000001" min="-90" max="90" value="${loc.latitude ?? ''}"></label></div><label>坐标系<select name="coordinate_system" id="coordinate-system">${options({gcj02: 'GCJ-02（高德 / 中国内地）', wgs84: 'WGS84（境外）'}, loc.coordinate_system || 'gcj02')}</select></label></details>
+    <details class="coordinate-details"><summary>经纬度与坐标系</summary><div class="form-grid"><label>经度<input name="longitude" id="longitude" type="number" step="0.000001" min="-180" max="180" value="${loc.longitude ?? ''}"></label><label>纬度<input name="latitude" id="latitude" type="number" step="0.000001" min="-90" max="90" value="${loc.latitude ?? ''}"></label></div><div class="opt"><span>坐标系</span><div class="segmented" id="coord-seg"><button type="button" data-coord="gcj02">GCJ-02（中国内地）</button><button type="button" data-coord="wgs84">WGS84（境外）</button></div><input type="hidden" name="coordinate_system" id="coordinate-system" value="${escape(loc.coordinate_system || 'gcj02')}"></div></details>
     <label>这段时间的近况<textarea name="note" maxlength="500" placeholder="如：在杭州工作，周末一般有空。">${escape(loc.note || '')}</textarea></label>
     <button type="submit" class="primary">保存${isEdit ? '修改' : '足迹'}</button></form>`, true);
   const generation = modalGeneration;
@@ -324,53 +326,64 @@ function locationDialog(member, loc = {}) {
     $('#longitude').value = ''; $('#latitude').value = ''; marker?.setMap(null);
     $('#point-status').textContent = '只记录城市；如需共享位置点，请重新选点。';
   }
-  const updateCountry = () => {
-    const china = $('#country-select').value === 'CHN';
-    ['#province-label', '#city-code-label', '#city-picker-label'].forEach(id => $(id).hidden = !china);
-    $('#province-select').required = china;
-    $('#coordinate-system').value = china ? 'gcj02' : 'wgs84';
+  let mode = (loc.country_code || 'CHN') === 'CHN' ? 'china' : 'world';
+  const setCoord = value => {
+    $('#coordinate-system').value = value;
+    $('#coord-seg').querySelectorAll('[data-coord]').forEach(button => button.classList.toggle('active', button.dataset.coord === value));
   };
-  async function updateCities(clear = true) {
-    const request = ++cityRequest;
-    const province = $('#province-select').value;
-    if (clear) {$('#city-name').value = ''; $('#city-code').value = '';}
-    $('#city-select').innerHTML = '<option value="">可以只记录省份，或选择城市</option>';
-    if (municipalities.has(province)) {$('#city-name').value = state.boot.provinces[province]; $('#city-code').value = province; return;}
-    if (!province || !A) return;
-    try {
-      const cities = await districtChildren(A, province);
-      if (!active() || request !== cityRequest) return;
-      $('#city-select').innerHTML += cities.map(city => `<option value="${escape(city.adcode)}" data-name="${escape(city.name)}">${escape(city.name)}</option>`).join('');
-      if (!clear) $('#city-select').value = $('#city-code').value;
-    } catch (error) {if (active()) $('#point-status').textContent = error.message;}
-  }
+  $('#coord-seg').querySelectorAll('[data-coord]').forEach(button => button.onclick = () => setCoord(button.dataset.coord));
+  const updateCountry = () => {
+    const china = mode === 'china';
+    $('#city-code-label').hidden = !china;
+    setCoord(china ? 'gcj02' : 'wgs84');
+  };
+  const choosePlace = item => {
+    if (!item) return;
+    if (item.kind === 'china') {
+      const province = municipalities.has(item.city.adcode) ? item.city.adcode : item.city.province.adcode;
+      $('#country-code').value = 'CHN'; $('#province-code').value = province;
+      $('#city-code').value = item.city.adcode; $('#city-name').value = item.city.name;
+      modalMap?.setCity(item.city.adcode);
+    } else {
+      $('#country-code').value = item.code; $('#province-code').value = ''; $('#city-code').value = '';
+    }
+  };
   function setPoint(lng, lat) {
     if (!active()) return;
     const request = ++pointRequest;
     $('#longitude').value = Number(lng).toFixed(6); $('#latitude').value = Number(lat).toFixed(6);
     marker?.setMap(null); marker = new A.Marker({map: modalMap, position: [Number(lng), Number(lat)]});
     $('#point-status').textContent = '已选点，保存后才会更新班级地图。请核对下方所属城市。';
-    if ($('#country-select').value === 'CHN') {
+    if ($('#country-code').value === 'CHN') {
       new A.Geocoder().getAddress([Number(lng), Number(lat)], (status, result) => {
         if (!active() || request !== pointRequest || status !== 'complete' || !result.regeocode?.addressComponent) return;
         const address = result.regeocode.addressComponent;
         const province = String(address.adcode || '').slice(0, 2) + '0000';
         if (!state.boot.provinces[province]) return;
-        $('#province-select').value = province;
+        $('#province-code').value = province;
         const adcode = String(address.adcode);
         $('#city-code').value = cityKey(adcode.slice(2, 4) === '90' ? adcode : adcode.slice(0, 4) + '00', province);
         $('#city-name').value = municipalities.has(province) ? state.boot.provinces[province] : (Array.isArray(address.city) ? address.district : address.city) || address.district;
-        run(() => updateCities(false));
+        $('#place-input').value = shortName($('#city-name').value);
       });
     }
   }
-  $('#country-select').onchange = () => {
-    clearPoint(); updateCountry(); $('#city-name').value = ''; $('#city-code').value = '';
-    $('#province-select').value = ''; run(() => updateCities());
-  }; updateCountry();
-  if (loc.coordinate_system) $('#coordinate-system').value = loc.coordinate_system;
-  $('#province-select').onchange = () => {clearPoint(); run(() => updateCities()); if (modalMap && $('#province-select').value) modalMap.setCity($('#province-select').value);};
-  $('#city-select').onchange = () => {clearPoint(); const option = $('#city-select').selectedOptions[0]; $('#city-code').value = option.value; $('#city-name').value = option.dataset.name || ''; if (option.value) modalMap?.setCity(option.value);};
+  updateCountry();
+  setCoord(loc.coordinate_system || $('#coordinate-system').value);
+  const search = placeSearch($('#place-input'), $('#location-form .sugg'), {mode: () => mode, divisions: () => state.divisions,
+    countries: state.boot.countries || {}, onPick: item => {if (item) {clearPoint(); choosePlace(item);}}});
+  $('#location-form').querySelectorAll('[data-mode]').forEach(button => button.onclick = () => {
+    mode = button.dataset.mode; clearPoint(); updateCountry(); search.redraw();
+    $('#location-form').querySelectorAll('[data-mode]').forEach(other => other.classList.toggle('on', other === button));
+    $('#place-input').value = ''; $('#city-name').value = ''; $('#city-code').value = ''; $('#province-code').value = '';
+    $('#country-code').value = mode === 'china' ? 'CHN' : '';
+  });
+  $('#location-form').querySelectorAll('[data-date]').forEach(button => button.onclick = () => {
+    const field = button.dataset.date, hidden = $(`#location-form [name="${field}"]`);
+    dayPicker(button.closest('.opt'), {value: hidden.value || state.boot.today, min: '1990-01-01', max: field === 'started_on' ? state.boot.today : '2100-12-31',
+      onPick: iso => {hidden.value = iso; button.textContent = iso; if (field === 'ended_on') $('[data-clear-ended]').hidden = false;}});
+  });
+  $('[data-clear-ended]').onclick = event => {$('#location-form [name="ended_on"]').value = ''; $('[data-date="ended_on"]').textContent = '还在这里'; event.currentTarget.hidden = true;};
   $('#clear-point').onclick = clearPoint;
   $('#gps-button').onclick = () => {
     if (!A) {notify('请先等待地图加载完成', true); return;}
@@ -379,16 +392,17 @@ function locationDialog(member, loc = {}) {
     navigator.geolocation.getCurrentPosition(position => {
       if (!active()) return;
       const point = [position.coords.longitude, position.coords.latitude];
-      if ($('#country-select').value === 'CHN' && !['710000', '810000', '820000'].includes($('#province-select').value)) {
+      if ($('#country-code').value === 'CHN' && !['710000', '810000', '820000'].includes($('#province-code').value)) {
         A.convertFrom(point, 'gps', (status, result) => {
           if (!active()) return;
           if (status !== 'complete' || !result.locations?.length) {$('#point-status').textContent = '坐标转换失败，请手工在地图上选点。'; return;}
-          const p = result.locations[0]; $('#coordinate-system').value = 'gcj02'; setPoint(p.lng, p.lat); modalMap.setZoomAndCenter(12, [p.lng, p.lat]);
+          const p = result.locations[0]; setCoord('gcj02'); setPoint(p.lng, p.lat); modalMap.setZoomAndCenter(12, [p.lng, p.lat]);
         });
-      } else {$('#coordinate-system').value = 'wgs84'; setPoint(...point); modalMap.setZoomAndCenter(12, point);}
+      } else {setCoord('wgs84'); setPoint(...point); modalMap.setZoomAndCenter(12, point);}
     }, () => {if (active()) $('#point-status').textContent = '未能获取设备位置，可以直接在地图上选点。';}, {timeout: 15000, maximumAge: 0});
   };
   bindForm('#location-form', async data => {
+    if (!data.country_code) throw new Error('请先点选一个城市或国家');
     data.close_previous = data.close_previous === 'on';
     if (isEdit) data.version = loc.version;
     await api(`members/${member.id}/locations${isEdit ? '/' + loc.id : ''}`, isEdit ? 'PATCH' : 'POST', data);
@@ -401,7 +415,6 @@ function locationDialog(member, loc = {}) {
       modalMap = new A.Map('editor-map', {zoom: loc.longitude != null ? 10 : 4, center: loc.longitude != null ? [Number(loc.longitude), Number(loc.latitude)] : [104, 35], resizeEnable: true});
       if (loc.longitude != null) marker = new A.Marker({map: modalMap, position: [Number(loc.longitude), Number(loc.latitude)]});
       modalMap.on('click', event => setPoint(event.lnglat.lng, event.lnglat.lat));
-      await updateCities(false);
     } catch (error) {if (active()) $('#editor-map').textContent = error.message;}
   });
 }
