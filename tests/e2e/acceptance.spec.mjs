@@ -1,7 +1,7 @@
 import {test, expect} from '@playwright/test';
 import {dragSheet, loginAs, openSheet, openWuhan, unlock} from './helpers.mjs';
 
-// Screens compared by hand against the B v3 mockups (class-regather-review/board/b3-*.png).
+// Screens compared by hand against the B v3 mockups (design mockups, not in the repo).
 // Read-only: nothing here saves, so later specs still see the seeded data.
 const shot = (page, info, n) => page.screenshot({path: `artifacts/acceptance/${info.project.name}-${n}.png`});
 const settle = page => page.waitForTimeout(1800);

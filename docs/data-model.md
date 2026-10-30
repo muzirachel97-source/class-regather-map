@@ -45,6 +45,6 @@ CSV 使用 UTF-8（支持 BOM），英文表头。JSON 为相同字段的行对�
 
 写接口采用 JSON、同源 Cookie 会话及 `X-CSRFToken`。表单入口设置 CSRF Cookie，登录后 Cookie 旋转，前端每次请求重新读取。身份操作为 `unlock/login/logout/claim/password`；个人位置为 `members/{id}/locations` 和 `.../{location_id}`；管理员接口位于 `admin/`。
 
-`POST members/{id}/locations/{location_id}/confirm` 传入 `version`，仅本人可调用（管理员也不能代为确认），只能确认当前有效的位置，只更新 confirmed_at，不改变 version。
+`POST members/{id}/locations/{location_id}/confirm` 传入 `version`，仅本人可调用（管理员也不能代为确认），只能确认当前有效的位置，只更新 confirmed_at，不改变 version。本人新建 / 修改位置或确认时可同时传 `bio` 与打开表单时的 `member_version`，个人备注与位置在同一事务内保存，备注版本不符返回 409 并整体回滚。
 
 编辑个人资料传入旧 `updated_at` 作为 `version`；编辑或删除位置传入响应中的 `version`。版本冲突返回 409，不能静默覆盖。API 对非授权操作返回 403，不向公开页返回认领码哈希或他人登录编号。
