@@ -203,3 +203,45 @@ test('a tap on the map away from any dot or populated district reports a blank t
   map.map.events.click({pixel: {x: 1, y: 1}});
   assert.equal(blanks, 1);
 }));
+
+test('provinces the provider lists without cities (e.g. Taiwan) are still searchable as one place', async () => {
+  const {chinaDivisions} = await import(`../gathering/static/gathering/map.js?divisions=${Date.now()}`);
+  const district = (adcode, name, children = []) => ({adcode, name, center: {lng: 1, lat: 1}, districtList: children});
+  const A = {DistrictSearch: class {search(keyword, done) {done('complete', {districtList: [district('100000', '中国', [
+    district('420000', '湖北省', [district('420100', '武汉市')]),
+    district('110000', '北京市', [district('110101', '东城区')]),
+    district('710000', '台湾省'),
+  ])]});}}};
+  const loaded = await chinaDivisions(A);
+  assert.deepEqual(loaded.list.map(c => c.adcode).sort(), ['110000', '420100', '710000']);
+});
+
+test('focus keeps the city clear of a right-hand panel; a bare touch is not a pan', () => withDocument(() => {
+  const moved = [];
+  const map = new ClassMap(stubSDK(), 'map', {divisions, onUserMoved: () => moved.push(1)});
+  map.map.scale = 1000;
+  map.map.getZoom = () => 9;
+  map.update(people, range);
+  map.setRightInset(420);
+  map.focus('420100');
+  const fit = map.map.fits.at(-1);
+  assert.equal(fit.padding[3], 460, 'right padding covers the panel');
+  assert.equal(fit.maxZoom, 9, 'focus keeps the current zoom');
+  map.map.events.touchstart?.();
+  assert.equal(moved.length, 0);
+  assert.equal(map.userMoved, undefined);
+  map.map.events.dragstart();
+  assert.equal(moved.length, 1);
+}));
+
+test('境外 shows Hong Kong as its own dot; 境内 does not count it', () => withDocument(() => {
+  const hk = {id: 30, name: '港', location: {country_code: 'CHN', province_code: '810000', province_name: '香港特别行政区', city_code: '810000', city_name: '香港特别行政区', confirmed_at: at}};
+  const map = new ClassMap(stubSDK(), 'map', {divisions});
+  map.map.scale = 1000;
+  map.update([hk, ...people], range);
+  assert.ok(!map.markers.some(marker => labelOf(marker) === '香港'));
+  map.setLevel('world');
+  const dot = map.markers.find(marker => labelOf(marker) === '香港');
+  assert.ok(dot);
+  assert.deepEqual([...dot.position], [114.17, 22.32]);
+}));

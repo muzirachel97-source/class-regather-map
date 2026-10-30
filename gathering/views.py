@@ -295,7 +295,7 @@ def location_detail(request, classroom, data, member_id, location_id):
 def location_confirm(request, classroom, data, member_id, location_id):
     # Not check_edit: admins may edit others' stays but never confirm them.
     member = get_object_or_404(Member, pk=member_id, classroom=classroom)
-    return {'location': location_json(confirm_location(member, location_id, data.get('version'), request.user))}
+    return {'location': location_json(confirm_location(member, location_id, data.get('version'), request.user, data))}
 
 
 @endpoint(('POST',), access='admin')

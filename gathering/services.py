@@ -143,9 +143,22 @@ def is_self(member, actor):
     return bool(actor and actor.is_authenticated and member.user_id == actor.pk)
 
 
+def apply_note(member, data):
+    """Save the personal note (Member.bio) in the caller's transaction, guarded by the version the
+    form was opened with. Only when the client sends member_version: imports never do."""
+    if 'member_version' not in data:
+        return
+    if data.get('member_version') != member.updated_at.isoformat():
+        raise Problem('个人备注已被更新，请重新打开再改', 409)
+    member.bio = string(data, 'bio', 240)
+    member.save(update_fields=['bio', 'updated_at'])
+
+
 @transaction.atomic
 def save_location(member, data, actor, location_id=None, check_version=True, confirm=True):
     member = lock_member(member)
+    if confirm and is_self(member, actor):
+        apply_note(member, data)
     values = location_values(data)
     existing = None
     if location_id:
@@ -184,7 +197,7 @@ def save_location(member, data, actor, location_id=None, check_version=True, con
 
 
 @transaction.atomic
-def confirm_location(member, location_id, version, actor):
+def confirm_location(member, location_id, version, actor, data=None):
     member = lock_member(member)
     # Checked on the locked row so a concurrent claim reset cannot slip through.
     if not is_self(member, actor):
@@ -196,6 +209,7 @@ def confirm_location(member, location_id, version, actor):
         raise Problem('记录已被更新，请刷新后再确认。', 409)
     if location.ended_on and location.ended_on <= timezone.localdate():
         raise Problem('这条位置已经结束')
+    apply_note(member, data or {})
     # update() rather than save(): save() would bump updated_at (the edit version).
     Location.objects.filter(pk=location.pk).update(confirmed_at=timezone.now())
     audit(member.classroom, actor, 'location.confirm', member, location_id=location.pk)

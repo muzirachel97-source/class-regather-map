@@ -234,3 +234,60 @@ class ConfirmTests(TestCase):
         return dict(country_code='CHN', province_code='330000', city_code='330100', city_name='杭州市',
                     started_on=datetime.fromisoformat(started_on).date(),
                     ended_on=datetime.fromisoformat(ended_on).date() if ended_on else None)
+
+
+@override_settings(PASSWORD_HASHERS=FAST_HASHERS, SECURE_SSL_REDIRECT=False)
+class StayWithNoteTests(TestCase):
+    """Round 2: a stay and the personal note (Member.bio) are saved in one transaction."""
+
+    def setUp(self):
+        self.room = Classroom.objects.create(slug='one', name='一班', unlock_password=make_password('class-password'))
+        self.user = get_user_model().objects.create_user('member', password='personal-password')
+        self.member = Member.objects.create(classroom=self.room, name='张同学', student_code='001', user=self.user, bio='旧备注')
+        self.client.force_login(self.user)
+        self.base = '/c/one/api/'
+        self.stay = save_location(self.member, stay(label='武汉大学'), self.user)
+        self.member.refresh_from_db()
+
+    def send(self, route, data, method='post'):
+        return getattr(self.client, method)(self.base + route, data=json.dumps(data), content_type='application/json')
+
+    def stay_payload(self, **changes):
+        payload = {k: (str(v) if v is not None else '') for k, v in stay().items()}
+        return payload | {'label': '武汉大学', 'version': self.stay.updated_at.isoformat()} | changes
+
+    def test_patch_saves_workplace_and_note_together(self):
+        response = self.send(f'members/{self.member.pk}/locations/{self.stay.pk}',
+                             self.stay_payload(label='华为', bio='周末有空', member_version=self.member.updated_at.isoformat()), 'patch')
+        self.assertEqual(response.status_code, 200, response.content)
+        self.stay.refresh_from_db(); self.member.refresh_from_db()
+        self.assertEqual((self.stay.label, self.member.bio), ('华为', '周末有空'))
+
+    def test_stale_note_version_rolls_the_stay_back_too(self):
+        before = (self.stay.label, self.stay.confirmed_at)
+        response = self.send(f'members/{self.member.pk}/locations/{self.stay.pk}',
+                             self.stay_payload(label='华为', bio='新的', member_version='2000-01-01T00:00:00+00:00'), 'patch')
+        self.assertEqual(response.status_code, 409)
+        self.stay.refresh_from_db(); self.member.refresh_from_db()
+        self.assertEqual((self.stay.label, self.stay.confirmed_at), before)
+        self.assertEqual(self.member.bio, '旧备注')
+
+    def test_confirm_can_carry_the_note(self):
+        response = self.send(f'members/{self.member.pk}/locations/{self.stay.pk}/confirm',
+                             {'version': self.stay.updated_at.isoformat(), 'bio': '还在', 'member_version': self.member.updated_at.isoformat()})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.bio, '还在')
+
+    def test_new_stay_can_carry_the_note(self):
+        payload = {k: (str(v) if v is not None else '') for k, v in {**stay(), 'started_on': timezone.localdate().isoformat(), 'city_code': '330200', 'city_name': '宁波市'}.items()}
+        response = self.send(f'members/{self.member.pk}/locations',
+                             payload | {'close_previous': True, 'bio': '搬到宁波了', 'member_version': self.member.updated_at.isoformat()})
+        self.assertEqual(response.status_code, 200, response.content)
+        self.member.refresh_from_db()
+        self.assertEqual(self.member.bio, '搬到宁波了')
+
+    def test_import_rows_with_bio_still_work(self):
+        # Imports pass a 'bio' column through save_location without member_version: never a conflict.
+        import_rows(self.room, [{'student_code': '009', 'name': '新同学', 'bio': '导入的'} | stay()], self.user)
+        self.assertEqual(Member.objects.get(classroom=self.room, student_code='009').bio, '导入的')

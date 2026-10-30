@@ -16,11 +16,11 @@ fi
 export DEBUG=1
 export DEMO_PASSWORD=demo-password-123
 # settings.py already reads SQLITE_PATH for the SQLite file; point it at the e2e DB.
-export SQLITE_PATH="$PWD/e2e.sqlite3"
+export SQLITE_PATH="$PWD/e2e-$PORT.sqlite3"  # one DB per port: parallel runs never share a file
 unset MYSQL_HOST
 
 PYTHON="${PYTHON:-.venv/bin/python}"
-rm -f e2e.sqlite3
+rm -f "$SQLITE_PATH"
 "$PYTHON" manage.py migrate --noinput
 "$PYTHON" manage.py seed_demo
 exec "$PYTHON" manage.py runserver "$HOST:$PORT" --noreload

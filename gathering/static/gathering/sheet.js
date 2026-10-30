@@ -27,6 +27,7 @@ export function createSheet(el, {stops, onChange = () => {}, openTo = () => 'hal
   function snap(name, animate = true) {
     detent = name;
     el.dataset.detent = name;
+    el.querySelector('.grab')?.setAttribute('aria-expanded', String(name !== 'peek'));
     const value = stops()[name];
     apply(value, animate);
     onChange(name, value);
@@ -81,6 +82,8 @@ export function createSheet(el, {stops, onChange = () => {}, openTo = () => 'hal
     addEventListener('pointerup', release);
     addEventListener('pointercancel', release);
   });
+  // The handle is a real button: a tap or Enter/Space toggles (a drag never reaches here).
+  el.querySelector('.grab')?.addEventListener('click', () => snap(detent === 'peek' ? openTo() : 'peek'));
   // A drag that started on a button must not also click it.
   el.addEventListener('click', event => {if (el.dataset.justDragged) {event.stopPropagation(); event.preventDefault();}}, true);
   addEventListener('resize', () => snap(detent, false));

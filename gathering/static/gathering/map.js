@@ -1,5 +1,5 @@
 import {chinaCountry, cityKey, municipalities, provinceKey} from './logic.js';
-import {bucket, cluster, countByKey, dotSize, inRange, memberKey} from './filter.js';
+import {REGION_NAMES, bucket, cluster, countByKey, dotSize, inRange, levelOf, memberKey} from './filter.js';
 import {countryCenters} from './country-centers.js';
 
 let loading;
@@ -49,8 +49,9 @@ const shortName = name => String(name || '').replace(/(特别行政区|维吾尔
 // Full-screen class map: district fill by count bucket plus one count dot per city
 // (per country overseas). Dots that would overlap merge into a cluster dot.
 export class ClassMap {
-  constructor(A, element, {onPick = () => {}, onClusterPick = () => {}, onUnplaced = () => {}, onBlank = () => {}, divisions = null} = {}) {
+  constructor(A, element, {onPick = () => {}, onClusterPick = () => {}, onUnplaced = () => {}, onBlank = () => {}, onUserMoved = () => {}, divisions = null} = {}) {
     this.A = A;
+    this.onUserMoved = onUserMoved;
     this.onBlank = onBlank;
     this.onUnplaced = onUnplaced;
     this.onPick = onPick;
@@ -66,8 +67,12 @@ export class ClassMap {
       features: ['bg', 'road', 'building']});  // no provider place labels: our dots carry the names, never twice
     this.map.addControl(new A.Scale());
     this.setDivisions(divisions);
-    this.map.on('dragstart', () => {this.userMoved = true;});
-    this.map.on('touchstart', () => {this.userMoved = true;});
+    const moved = () => {if (!this.userMoved) {this.userMoved = true; this.onUserMoved();}};
+    // A real pan, a pinch or a wheel zoom hands the view to the user; a bare tap does not.
+    this.map.on('dragstart', moved);
+    const container = this.map.getContainer?.();
+    container?.addEventListener('touchmove', event => {if (event.touches.length > 1) moved();}, {passive: true});
+    container?.addEventListener('wheel', moved, {passive: true});
     this.refreshMarkers = () => this.renderMarkers();
     for (const event of markerEvents) this.map.on(event, this.refreshMarkers);
     this.map.on('click', event => {
@@ -116,7 +121,7 @@ export class ClassMap {
     const groups = new Map();
     for (const member of this.members) {
       const loc = member.location;
-      if (!loc || (loc.country_code === 'CHN') !== (this.level === 'china') || !inRange(loc.confirmed_at, this.range)) continue;
+      if (!loc || levelOf(loc) !== this.level || !inRange(loc.confirmed_at, this.range)) continue;
       const key = memberKey(loc, this.level);
       const group = groups.get(key) || {key, n: 0, coords: [], loc};
       group.n++;
@@ -136,7 +141,7 @@ export class ClassMap {
   place({key, coords, loc}) {
     const usable = coords.filter(pair => pair.every(Number.isFinite));
     let position = usable.length ? [0, 1].map(i => usable.reduce((sum, pair) => sum + pair[i], 0) / usable.length) : null;
-    if (this.level === 'world') return {position: position || countryCenters[key], label: loc.country_name || key};
+    if (this.level === 'world') return {position: position || countryCenters[key], label: REGION_NAMES[key] || loc.country_name || key};
     if (key.startsWith('prov:')) {
       const province = this.divisions?.provinces.get(loc.province_code);
       // The provider's province centre is the capital; nudge the dot so it never sits
@@ -188,7 +193,10 @@ export class ClassMap {
   }
   focus(key) {
     const point = this.points().find(candidate => candidate.key === key);
-    if (point) this.map.setCenter(point.position);
+    if (!point) return;
+    // With a side panel open, centre in the map that is still visible, at the current zoom.
+    if (this.right) this.map.setFitView([new this.A.Marker({position: point.position})], false, this.padding(), this.map.getZoom());
+    else this.map.setCenter(point.position);
   }
   setBottomInset(px) {this.inset = px;}
   // AMap 1.4 setFitView margins are [top, bottom, left, right] (not CSS order).
@@ -196,6 +204,7 @@ export class ClassMap {
   padding() {return [110, this.inset + 20, 40, (this.right || 0) + 40];}
   fit() {
     this.wantsFit = true;
+    this.userMoved = false;  // an explicit fit hands the view back to the app
     if (!this.markers.length) return;
     // AMap 1.4 cannot zoom out past 3, so continents apart do not fit one phone screen;
     // centring on their midpoint would show neither. Centre on the biggest group instead.
@@ -225,7 +234,8 @@ export function chinaDivisions(A) {
       for (const province of provinces) {
         const p = {adcode: province.adcode, name: province.name, center: lngLat(province.center)};
         out.provinces.set(p.adcode, p);
-        const children = municipalities.has(p.adcode) ? [province] : province.districtList || [];
+        // Municipalities, HK/Macau, and provinces listed without cities (Taiwan) count as one city.
+        const children = municipalities.has(p.adcode) || !province.districtList?.length ? [province] : province.districtList;
         for (const city of children) {
           const c = {adcode: city.adcode, name: city.name, center: lngLat(city.center), province: p};
           out.cities.set(c.adcode, c);

@@ -38,3 +38,13 @@ test('a finger on the header pulls a full sheet back down; the handle is a 44px 
   expect(await detent(page)).not.toBe('full');
   expect((await page.locator('#sheet .grab').boundingBox()).height).toBeGreaterThanOrEqual(44);
 });
+
+test('the sheet opens and closes from the keyboard', async ({page}) => {
+  await unlock(page);
+  await page.locator('#sheet .grab').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#sheet')).toHaveAttribute('data-detent', /half|full/);
+  await expect(page.locator('#sheet .grab')).toHaveAttribute('aria-expanded', 'true');
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#sheet')).toHaveAttribute('data-detent', 'peek');
+});

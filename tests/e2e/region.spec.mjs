@@ -43,9 +43,9 @@ test('overseas scope keeps the range and groups by country', async ({page}) => {
   await page.locator('#scope-seg [data-scope="world"]').click();
   await expect(page.locator('#range [data-preset="all"]')).toHaveClass(/\bon\b/);
   await dragSheet(page, -220);
-  await expect(page.locator('#count-world')).toHaveText('3');
-  await expect(page.locator('#sheet-body .sec')).toHaveCount(3);
-  await expect(page.locator('#sheet-body .sec').first()).toContainText(/新加坡|日本|美国/);
+  await expect(page.locator('#count-world')).toHaveText('4');  // 3 countries + Hong Kong (境外)
+  await expect(page.locator('#sheet-body .sec', {hasText: '香港'})).toBeVisible();
+  await expect(page.locator('#sheet-body .sec').first()).toContainText(/新加坡|日本|美国|香港/);
   // Continents apart cannot share one zoom-3 phone screen; at least one country dot is in view.
   await expect(page.locator('.pt').first()).toBeVisible();
 });
@@ -75,10 +75,11 @@ test('the overseas home list also shows overseas classmates confirmed before the
   await dragSheet(page, -700);
   const inRange = await page.locator('#count-world').textContent();
   const total = await page.evaluate(async () => (await (await fetch('api/snapshot', {credentials: 'same-origin'})).json())
-    .members.filter(m => m.location && m.location.country_code !== 'CHN').length);
+    .members.filter(m => m.location && (m.location.country_code !== 'CHN' || ['810000', '820000', '710000'].includes(m.location.province_code))).length);  // 境外 includes HK/MO/TW
   expect(total).toBeGreaterThan(Number(inRange));  // the demo data has at least one older overseas stay
   await expect(page.locator('#sheet-body .sec', {hasText: '更早的记录'})).toBeVisible();
-  await expect(page.locator('#sheet-body .mem')).toHaveCount(total);
+  const missing = await page.evaluate(async () => (await (await fetch('api/snapshot', {credentials: 'same-origin'})).json()).members.filter(m => !m.location).length);
+  await expect(page.locator('#sheet-body .mem')).toHaveCount(total + missing);  // + the 还没填位置 group
 });
 
 test('tapping a row twice quickly builds only one footprint map', async ({page}) => {

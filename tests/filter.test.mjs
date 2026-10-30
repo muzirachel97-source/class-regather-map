@@ -86,3 +86,12 @@ test('isStale 13 months true, 11 months false', () => {
   assert.equal(isStale(at('2025-11-29'), '2026-10-29'), false);
   assert.equal(isStale(null, '2026-10-29'), true);
 });
+
+test('Hong Kong, Macau and Taiwan count under 境外, each as its own place', () => {
+  const sar = (id, province, name) => ({id, name: 'x', location: {country_code: 'CHN', province_code: province, province_name: name, city_code: province === '710000' ? '' : province, confirmed_at: at('2025-01-01')}});
+  const members = [sar(1, '810000', '香港特别行政区'), sar(2, '820000', '澳门特别行政区'), sar(3, '710000', '台湾省'), person(4, at('2025-01-01'))];
+  const range = presetRange('all', '2026-10-29', '2015-09-01');
+  assert.deepEqual(consistentCounts(members, range), {china: 1, world: 3, total: 4});
+  assert.deepEqual([...countByKey(members, range, 'world').keys()].sort(), ['HKG', 'MAC', 'TWN']);
+  assert.equal(memberKey(members[0].location, 'world'), 'HKG');
+});

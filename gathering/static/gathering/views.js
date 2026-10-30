@@ -1,4 +1,4 @@
-import {inRange} from './filter.js';
+import {REGIONS, REGION_NAMES, inRange} from './filter.js';
 
 // HTML builders for the sheet lists (spec 5.1–5.4). Pure: data in, escaped HTML out.
 
@@ -17,18 +17,19 @@ export const summaryLine = total => `这段时间确认过位置 · 全班 ${tot
 
 export function placeOf(loc) {
   if (!loc) return '';
+  if (loc.country_code === 'CHN' && REGIONS[loc.province_code]) return REGION_NAMES[REGIONS[loc.province_code]];
   return loc.country_code === 'CHN' ? shortName(loc.city_name) || `${shortName(loc.province_name)} · 未填城市` : loc.country_name || loc.country_code;
 }
 
-export function memberRow(member, range, {showPlace = false} = {}) {
+export function memberRow(member, range, {showPlace = false, meId = null} = {}) {
   const loc = member.location;
   const fresh = loc && inRange(loc.confirmed_at, range);
   const tag = !loc ? '还没填位置' : !loc.confirmed_at ? '还没确认过' : fresh ? `${loc.confirmed_at.slice(0, 4)}.${loc.confirmed_at.slice(5, 7)} 确认` : `${loc.confirmed_at.slice(0, 4)} 年的信息`;
   const line = [showPlace ? placeOf(loc) : '', loc?.label].filter(Boolean).join(' · ');  // empty stays empty
-  const note = member.bio || loc?.note;  // the personal note follows the person; old stays may still carry a note
+  const note = member.bio;  // only the personal note: clearing it clears the line (old stay notes stay in the footprint)
   return `<button type="button" class="mem${fresh ? '' : ' old'}" data-member="${member.id}">` +
     `<span class="av" style="background:${TONES[member.id % TONES.length]}" aria-hidden="true">${escapeHTML(member.name.slice(0, 1))}</span>` +
-    `<span class="tx"><b>${escapeHTML(member.name)}</b><span class="tag">${tag}</span>${line ? `<span class="s">${escapeHTML(line)}</span>` : ''}` +
+    `<span class="tx"><b>${escapeHTML(member.name)}</b>${member.id === meId ? '<span class="me">我</span>' : ''}<span class="tag">${tag}</span>${line ? `<span class="s">${escapeHTML(line)}</span>` : ''}` +
     `${note ? `<span class="bio">${escapeHTML(note)}</span>` : ''}</span>${CHEVRON}</button>`;
 }
 
@@ -36,14 +37,33 @@ export function memberRow(member, range, {showPlace = false} = {}) {
 // character falls between the first characters of two initial letters (no I, U, V).
 const LETTERS = 'abcdefghjklmnopqrstwxyz';
 const BOUNDS = '阿八嚓哒妸发旮哈讥咔垃妈拏噢妑七呥仨他屲夕丫帀';
-const collator = new Intl.Collator('zh-Hans-CN');
+// No zh collation (very old engines): hanzi then match by characters only, never throw.
+const collator = (() => {
+  try {return typeof Intl !== 'undefined' && Intl.Collator?.supportedLocalesOf?.(['zh-Hans-CN', 'zh']).length ? new Intl.Collator('zh-Hans-CN') : null;}
+  catch {return null;}
+})();
+// Where the collator's reading is not the one people type: polyphonic place names and surnames.
+const PLACE_READINGS = {'重庆': 'cq', '长沙': 'cs', '长春': 'cc', '长治': 'cz', '长安': 'ca', '厦门': 'xm', '蚌埠': 'bb', '六安': 'la', '乐山': 'ls', '番禺': 'py', '朝阳': 'cy'};
+const SURNAME_READINGS = {'曾': 'z', '单': 's', '解': 'x', '区': 'o', '仇': 'q', '朴': 'p', '查': 'z', '翟': 'z', '盖': 'g', '尉': 'y', '缪': 'm', '覃': 'q', '乐': 'y', '种': 'c'};
 export function initials(text) {
   return [...String(text || '')].map(char => {
     if (!/[\u4e00-\u9fff]/.test(char)) return char.toLowerCase();
+    if (!collator) return '';
     let letter = '';
     for (let i = 0; i < BOUNDS.length && collator.compare(char, BOUNDS[i]) >= 0; i++) letter = LETTERS[i];
     return letter;
   }).join('');
+}
+
+// The collator's initials plus the common alternative readings (重庆 → cq, 曾 → z).
+function readings(value) {
+  const plain = initials(value), out = [plain];
+  for (const [place, letters] of Object.entries(PLACE_READINGS)) {
+    const at = value.indexOf(place);
+    if (at >= 0) out.push(plain.slice(0, at) + letters + plain.slice(at + place.length));
+  }
+  if (SURNAME_READINGS[value[0]]) out.push(SURNAME_READINGS[value[0]] + plain.slice(1));
+  return out;
 }
 
 // A query matches text directly ("晓", "深圳") or by pinyin initials ("lx", "sz").
@@ -51,7 +71,9 @@ export function textMatches(text, query) {
   const q = query.trim().toLowerCase();
   if (!q) return false;
   const value = String(text || '');
-  return value.toLowerCase().includes(q) || /^[a-z]+$/.test(q) && initials(value).includes(q);
+  if (value.toLowerCase().includes(q)) return true;
+  if (!/^[a-z]+$/.test(q)) return false;
+  return readings(value).some(reading => reading.includes(q));
 }
 
 // Search over what a classmate would type: name, place, label, note, bio.

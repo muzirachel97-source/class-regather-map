@@ -53,6 +53,7 @@ class Command(BaseCommand):
             ('035', '高山', 'CHN', '420000', '', '', '2015-09-01', '', '', '', '只记得在湖北。'),
             ('036', '林间', 'CHN', '440000', '', '', '2015-09-01', '', '', '', ''),
             ('037', '纪远', 'USA', '', '', '纽约', '2022-08-01', '', -74.006, 40.713, '来纽约找我。'),
+            ('038', '许港生', 'CHN', '810000', '810000', '香港特别行政区', '2024-03-01', '', 114.170, 22.320, '中环上班。'),  # shows under 境外
         ]
         rows = [dict(zip(['student_code', 'name', 'country_code', 'province_code', 'city_code', 'city_name', 'started_on', 'ended_on', 'longitude', 'latitude', 'note'], row)) for row in data]
         for row in rows:

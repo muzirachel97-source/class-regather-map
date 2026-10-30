@@ -16,25 +16,25 @@ async function loginAdmin(page) {
 test('every dialog is free of native pickers', async ({page}) => {
   await unlock(page);
   await dragSheet(page, -700);  // account links live at the end of the home list
-  await page.locator('#account #auth-open').click();
+  await page.locator('#account [data-act="login"]').click();
   await expect(page.locator('#modal')).toBeVisible();
   expect(await nativeCount(page)).toBe(0);
   await page.locator('#modal-close').click();
 
   await loginAdmin(page);
-  for (const id of ['#my-password', '#admin-open']) {
+  for (const id of ['[data-act="password"]', '[data-act="admin"]']) {
     await page.locator(`#account ${id}`).click();
     await expect(page.locator('#modal')).toBeVisible();
     expect(await nativeCount(page), id).toBe(0);
     expect(await smallButtons(page), id).toEqual([]);
     await page.locator('#modal-close').click();
   }
-  await page.locator('#account #admin-open').click();
+  await page.locator('#account [data-act="admin"]').click();
   await page.locator('#import-open').click();
   expect(await nativeCount(page), 'import').toBe(0);
   await page.locator('#modal-close').click();
 
-  await page.locator('#account #my-profile').click();
+  await page.locator('#account [data-act="profile"]').click();
   await page.locator('#add-location').click();
   await expect(page.locator('#location-form')).toBeVisible();
   expect(await nativeCount(page), 'location').toBe(0);
@@ -45,7 +45,7 @@ test('history editing uses the city search and the day picker', async ({page}, i
   // Both device profiles share one database and one admin member: give each its own past stay.
   const [y1, y2] = info.project.name === 'se' ? ['2016', '2017'] : ['2019', '2020'];
   await loginAdmin(page);
-  await page.locator('#account #my-profile').click();
+  await page.locator('#account [data-act="profile"]').click();
   await page.locator('#add-location').click();
   await page.locator('#location-form #place-input').fill('成都');
   await page.locator('#location-form .sugg [data-place]', {hasText: '成都'}).first().click();
@@ -66,5 +66,5 @@ test('account links are reachable from the half sheet without scrolling the list
   await unlock(page);
   const {dragSheet: drag} = await import('./helpers.mjs');
   await drag(page, -220);
-  await expect(page.locator('#account #auth-open')).toBeInViewport();
+  await expect(page.locator('#account [data-act="login"]')).toBeInViewport();
 });

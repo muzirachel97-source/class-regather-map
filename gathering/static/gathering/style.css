@@ -70,7 +70,7 @@ form .primary { width: 100%; margin-top: 18px; }
 /* Bottom sheet */
 .sheet { position: absolute; left: 0; right: 0; bottom: 0; height: calc(100% - 8px - var(--safe-top)); z-index: 30; display: flex; flex-direction: column;
   background: #fff; border-radius: var(--r-sheet) var(--r-sheet) 0 0; box-shadow: 0 -8px 24px rgba(23, 21, 58, .12); touch-action: none; will-change: transform; }
-.grab { flex: none; height: 44px; margin-bottom: -18px; display: grid; place-items: center; cursor: grab; touch-action: none; }
+.grab { flex: none; width: 100%; height: 44px; margin-bottom: -18px; display: grid; place-items: center; cursor: grab; touch-action: none; }
 /* The header drags the sheet even when the list scrolls: no browser pan may claim the finger. */
 #sheet-head { touch-action: none; }
 .grab::before { content: ''; width: 36px; height: 5px; border-radius: 3px; background: #cfcde3; }
@@ -127,6 +127,8 @@ form .primary { width: 100%; margin-top: 18px; }
 .mem b { font-size: 16px; font-weight: 600; }
 .mem .s { display: block; font-size: 14px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem .bio { display: block; font-size: 14px; margin-top: 2px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.me { font-size: 12px; font-weight: 700; color: #fff; background: var(--accent); border-radius: 6px; padding: 1px 6px; margin-left: 6px; }
+.fit-all { position: absolute; right: 12px; top: calc(64px + var(--safe-top)); z-index: 20; min-height: 44px; padding: 0 14px; border-radius: 22px; background: var(--float); -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); box-shadow: var(--shadow); font-size: 13px; font-weight: 600; }
 .tag { font-size: 12px; font-weight: 600; border-radius: 6px; padding: 1px 6px; margin-left: 6px; background: var(--fresh-bg); color: var(--fresh); white-space: nowrap; }
 .mem.old .av { filter: grayscale(1); opacity: .6; }
 .mem.old b { color: var(--sub); }

@@ -82,7 +82,7 @@ test('a late device location does not overwrite a later manual choice', async ({
 test('closing the update view returns to the member detail it came from', async ({page}) => {
   await loginAsOwnMember(page);
   await dragSheet(page, -700);
-  await page.locator('#account #my-profile').click();
+  await page.locator('#account [data-act="profile"]').click();
   await expect(page.locator('#member-detail')).toBeVisible();
   await dragSheet(page, 350);  // pull the detail down so the top bar (and 我) is reachable
   await page.locator('#me-btn').click();
@@ -92,7 +92,7 @@ test('closing the update view returns to the member detail it came from', async 
   await expect(page.locator('#sheet-title')).toHaveText(who.name);
 });
 
-test('a stale confirm (409) shows the reason and reloads, so the retry uses fresh data', async ({page}) => {
+test('a stale confirm (409) keeps the form, says why, and the retry uses fresh versions', async ({page}) => {
   await loginAsOwnMember(page);
   await page.locator('#me-btn').click();
   let calls = 0;
@@ -100,15 +100,38 @@ test('a stale confirm (409) shows the reason and reloads, so the retry uses fres
     calls++;
     return route.fulfill({status: 409, contentType: 'application/json', body: '{"error":"记录已被更新，请刷新后再确认。"}'});
   });
-  const snapshots = [];
-  page.on('request', request => {if (request.url().includes('/api/snapshot')) snapshots.push(request.url());});
+  const refetches = [];
+  page.on('request', request => {if (/\/api\/members\/\d+$/.test(request.url())) refetches.push(request.url());});
   await page.locator('#update-confirm').click();
   await page.locator('#update-still-save').click();
-  await expect(page.locator('#toast')).toContainText('记录已被更新');
-  await expect.poll(() => snapshots.length).toBeGreaterThan(0);
-  await expect(page.locator('#update-confirm')).toBeEnabled();
+  await expect(page.locator('#update .field-error')).toContainText('记录已被更新');
+  await expect(page.locator('#update-still-save')).toBeEnabled();
+  await expect.poll(() => refetches.length).toBeGreaterThan(0);  // versions refreshed for the retry
   expect(calls).toBe(1);
   await page.unroute('**/locations/*/confirm');
+});
+
+// Must run before the move below: a second move on the same day is (correctly) refused.
+test('while a move conflict refreshes, changing or clearing the city never enables a save without a city', async ({page}) => {
+  await loginAsOwnMember(page);
+  await page.locator('#me-btn').click();
+  await page.locator('#update-move').click();
+  await page.locator('#place-input').fill('成');
+  await page.locator('.sugg [data-place]', {hasText: '成都'}).first().click();
+  await page.locator('#update-bio').fill('新的备注');
+  await page.route(/\/api\/members\/\d+\/locations$/, route => route.fulfill({status: 409, contentType: 'application/json', body: '{"error":"个人备注已被更新，请重新打开再改"}'}));
+  await page.route(/\/api\/members\/\d+$/, async route => {await new Promise(r => setTimeout(r, 1500)); return route.continue();});
+  await page.locator('#update-save').click();
+  await expect(page.locator('#update .field-error')).toContainText('正在刷新');
+  await page.locator('#place-input').fill('');  // clear the city mid-refresh
+  await expect(page.locator('#update-save')).toBeDisabled();
+  await expect(page.locator('#update .field-error')).toContainText('已刷新');
+  await expect(page.locator('#update-save')).toBeDisabled();  // still no city
+  await page.locator('#place-input').fill('成');
+  await page.locator('.sugg [data-place]', {hasText: '成都'}).first().click();
+  await expect(page.locator('#update-save')).toBeEnabled();
+  await page.unroute(/\/api\/members\/\d+\/locations$/);
+  await page.unroute(/\/api\/members\/\d+$/);
 });
 
 test('still here refreshes the confirmation and clears the dot', async ({page}) => {

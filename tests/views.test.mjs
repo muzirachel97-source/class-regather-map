@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {initials, matches, memberRow, otherGroup, regionTitle, sectionTitle, summaryLine, textMatches} from '../gathering/static/gathering/views.js';
+import {initials, matches, memberRow, otherGroup, placeOf, regionTitle, sectionTitle, summaryLine, textMatches} from '../gathering/static/gathering/views.js';
 import {monthIndex} from '../gathering/static/gathering/filter.js';
 
 const person = (confirmed, loc = {}) => ({id: 7, name: '林<小满>', bio: '', location: {country_code: 'CHN', country_name: '中国', province_code: '420000',
@@ -12,7 +12,7 @@ test('fresh row shows the confirm month tag; text is escaped', () => {
   assert.match(html, /2026\.10 确认/);
   assert.match(html, /林&lt;小满&gt;/);
   assert.match(html, /武汉 · 光谷</);
-  assert.match(html, /class="bio">做芯片</);  // an old stay note shows when there is no personal note
+  assert.doesNotMatch(html, /class="bio"/);  // an old stay note is not a personal note (it stays in the footprint)
   assert.doesNotMatch(html, /class="mem old"/);
 });
 
@@ -71,4 +71,28 @@ test('nothing filled in means nothing shown: no placeholder text', () => {
   assert.doesNotMatch(html, /没写/);
   assert.doesNotMatch(html, /class="s"/);
   assert.doesNotMatch(html, /class="bio"/);
+});
+
+test('searching a province name or its initials finds the people there', () => {
+  const hubei = {id: 2, name: '周一禾', bio: '', location: {country_code: 'CHN', city_name: '武汉市', province_name: '湖北省', country_name: '中国', label: '', note: ''}};
+  const beijing = {id: 3, name: '周宁', bio: '', location: {country_code: 'CHN', city_name: '北京市', province_name: '北京市', country_name: '中国', label: '', note: ''}};
+  assert.ok(matches(hubei, '湖北'));
+  assert.ok(matches(hubei, 'hb'));
+  assert.ok(!matches(beijing, '湖北'));
+});
+
+test('common polyphonic place names and surnames get the initials people actually type', () => {
+  for (const [text, query] of [['重庆市', 'cq'], ['长沙市', 'cs'], ['长春市', 'cc'], ['厦门市', 'xm'], ['曾静', 'zj'], ['单磊', 'sl']]) {
+    assert.ok(textMatches(text, query), `${text} ~ ${query}`);
+  }
+});
+
+test('the note line shows only the personal note: clearing it clears the line', () => {
+  const html = memberRow({id: 9, name: '甲', bio: '', location: {country_code: 'CHN', city_name: '武汉市', label: '', note: '2015 年的旧近况', confirmed_at: '2026-01-03T12:00:00+08:00'}}, range, {});
+  assert.doesNotMatch(html, /class="bio"/);
+});
+
+test('Hong Kong, Macau and Taiwan are named as such, never "· 未填城市"', () => {
+  assert.equal(placeOf({country_code: 'CHN', province_code: '810000', province_name: '香港特别行政区', city_name: '香港特别行政区'}), '香港');
+  assert.equal(placeOf({country_code: 'CHN', province_code: '710000', province_name: '台湾省', city_name: ''}), '台湾');
 });

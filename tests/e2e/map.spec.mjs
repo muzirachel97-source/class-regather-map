@@ -9,7 +9,8 @@ test('count markers sum to the domestic count shown in the header', async ({page
   await page.locator('#range [data-preset="all"]').click();
   const expected = await page.evaluate(async () => {
     const {members} = await (await fetch('api/snapshot', {credentials: 'same-origin'})).json();
-    return members.filter(m => m.location?.country_code === 'CHN' && m.location.confirmed_at).length;
+    // 境内 = mainland only: Hong Kong, Macau and Taiwan are counted under 境外.
+    return members.filter(m => m.location?.country_code === 'CHN' && !['810000', '820000', '710000'].includes(m.location.province_code) && m.location.confirmed_at).length;
   });
   await expect(page.locator('#count-china')).toHaveText(String(expected));
   await expect.poll(() => markerSum(page), {timeout: 15_000}).toBe(expected);

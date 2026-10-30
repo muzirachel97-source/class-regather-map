@@ -12,5 +12,5 @@ test('demo class unlocks with the view code', async ({page}) => {
   await expect(gate).toBeHidden();
   await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('#sheet-title')).toHaveText(/^\d+ 位同学$/);
-  await expect(page.locator('#sheet-summary')).toContainText('全班 37 人');
+  await expect(page.locator('#sheet-summary')).toContainText('全班 38 人');
 });

@@ -21,12 +21,17 @@ export function inRange(confirmedAt, range) {
 export const bucket = n => n >= 10 ? 3 : n >= 4 ? 2 : n >= 2 ? 1 : 0;
 export const dotSize = n => [30, 34, 40, 46][bucket(n)];
 
+// Hong Kong, Macau and Taiwan are stored under CHN (as upstream does) but shown under 境外,
+// each as its own place, like a country.
+export const REGIONS = {'810000': 'HKG', '820000': 'MAC', '710000': 'TWN'};
+export const REGION_NAMES = {HKG: '香港', MAC: '澳门', TWN: '台湾'};
+
 export function memberKey(location, level) {
-  if (level === 'world') return location.country_code;
+  if (level === 'world') return REGIONS[location.province_code] && location.country_code === 'CHN' ? REGIONS[location.province_code] : location.country_code;
   return location.city_code ? cityKey(location.city_code, location.province_code) : 'prov:' + location.province_code;
 }
 
-const levelOf = location => location.country_code === 'CHN' ? 'china' : 'world';
+export const levelOf = location => location.country_code === 'CHN' && !REGIONS[location.province_code] ? 'china' : 'world';
 
 export function countByKey(members, range, level) {
   const counts = new Map();
