@@ -126,6 +126,7 @@ form .primary { width: 100%; margin-top: 18px; }
 .mem .tx { flex: 1; min-width: 0; }
 .mem b { font-size: 16px; font-weight: 600; }
 .mem .s { display: block; font-size: 14px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem .bio { display: block; font-size: 14px; margin-top: 2px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tag { font-size: 12px; font-weight: 600; border-radius: 6px; padding: 1px 6px; margin-left: 6px; background: var(--fresh-bg); color: var(--fresh); white-space: nowrap; }
 .mem.old .av { filter: grayscale(1); opacity: .6; }
 .mem.old b { color: var(--sub); }
@@ -195,12 +196,12 @@ summary { min-height: 44px; display: flex; align-items: center; font-weight: 600
 #toast { position: fixed; left: 50%; transform: translateX(-50%); top: calc(14px + var(--safe-top)); z-index: 100; max-width: calc(100% - 24px); background: var(--ink); color: #fff; border-radius: 14px; padding: 12px 16px; font-size: 14px; font-weight: 600; box-shadow: var(--shadow); }
 #toast.error { background: var(--danger); }
 
-/* Wide screens: the sheet becomes a left-hand panel; the map stays full-bleed. */
-@media (min-width: 900px) {
-  .sheet { left: 16px; right: auto; width: 400px; bottom: 16px; height: calc(100% - 92px); border-radius: var(--r-sheet); }
-  .top { left: 432px; }
-  .fchip { left: 432px; }
+/* Wide screens: the list is a right-hand panel that folds down to a small card. It sits on
+   the right so AMap's logo, scale and review number (bottom-left) are never covered. */
+@media (min-width: 720px) {
+  .sheet { left: auto; right: 16px; width: 400px; bottom: 16px; height: calc(100% - 92px); border-radius: var(--r-sheet); }
 }
+
 @media (prefers-reduced-motion: reduce) {
   .pt .d, .primary:active, .secondary:active, .mem:active, .chips button:active { transition: none; transform: none; }
   .pt.sel .d { transform: scale(1.5); }

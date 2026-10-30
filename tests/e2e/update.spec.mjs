@@ -103,6 +103,7 @@ test('a stale confirm (409) shows the reason and reloads, so the retry uses fres
   const snapshots = [];
   page.on('request', request => {if (request.url().includes('/api/snapshot')) snapshots.push(request.url());});
   await page.locator('#update-confirm').click();
+  await page.locator('#update-still-save').click();
   await expect(page.locator('#toast')).toContainText('记录已被更新');
   await expect.poll(() => snapshots.length).toBeGreaterThan(0);
   await expect(page.locator('#update-confirm')).toBeEnabled();
@@ -115,6 +116,7 @@ test('still here refreshes the confirmation and clears the dot', async ({page}) 
   await page.locator('#me-btn').click();
   await expect(page.locator('#update .card')).toContainText(who.city);
   await page.locator('#update-confirm').click();
+  await page.locator('#update-still-save').click();
   await expect(page.locator('#toast')).toContainText(`已确认还在${who.city}`);
   await expect(page.locator('#me-btn .dot')).toBeHidden();
 });
@@ -126,7 +128,7 @@ test('moving to Shenzhen without a month starts today', async ({page}) => {
   await page.locator('#update-move').click();
   await page.locator('#place-input').fill('深');
   await page.locator('.sugg [data-place]', {hasText: '深圳'}).first().click();
-  await page.locator('#update-note').fill('南山做游戏');
+  await page.locator('#update-label').fill('南山 · 做游戏');
   await page.locator('#update-save').click();
   await expect(page.locator('#toast')).toContainText('已更新到深圳 · 最近确认：今天');
   const latest = await page.evaluate(async () => {
@@ -136,7 +138,7 @@ test('moving to Shenzhen without a month starts today', async ({page}) => {
   });
   expect(latest.city_name).toContain('深圳');
   expect(latest.started_on).toBe(today);
-  expect(latest.note).toBe('南山做游戏');
+  expect(latest.label).toBe('南山 · 做游戏');
 });
 
 test('not me logs out and opens the login form', async ({page}) => {

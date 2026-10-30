@@ -195,3 +195,11 @@ test('the base map shows no place labels of its own, so our dot names are never 
   assert.ok(Array.isArray(map.map.options.features));
   assert.ok(!map.map.options.features.includes('point'));
 }));
+
+test('a tap on the map away from any dot or populated district reports a blank tap', () => withDocument(() => {
+  let blanks = 0;
+  const map = new ClassMap(stubSDK(), 'map', {divisions, onBlank: () => blanks++});
+  map.update(people, range);
+  map.map.events.click({pixel: {x: 1, y: 1}});
+  assert.equal(blanks, 1);
+}));

@@ -49,8 +49,9 @@ const shortName = name => String(name || '').replace(/(特别行政区|维吾尔
 // Full-screen class map: district fill by count bucket plus one count dot per city
 // (per country overseas). Dots that would overlap merge into a cluster dot.
 export class ClassMap {
-  constructor(A, element, {onPick = () => {}, onClusterPick = () => {}, onUnplaced = () => {}, divisions = null} = {}) {
+  constructor(A, element, {onPick = () => {}, onClusterPick = () => {}, onUnplaced = () => {}, onBlank = () => {}, divisions = null} = {}) {
     this.A = A;
+    this.onBlank = onBlank;
     this.onUnplaced = onUnplaced;
     this.onPick = onPick;
     this.onClusterPick = onClusterPick;
@@ -71,9 +72,9 @@ export class ClassMap {
     for (const event of markerEvents) this.map.on(event, this.refreshMarkers);
     this.map.on('click', event => {
       const props = this.layer?.getDistrictByContainerPos?.(event.pixel);
-      if (!props) return;
-      const key = this.level === 'world' ? chinaCountry(props.SOC) : cityKey(String(props.adcode_cit || props.adcode), provinceKey(props));
-      if (this.counts?.get(key)) this.onPick(key, this.level);
+      const key = props && (this.level === 'world' ? chinaCountry(props.SOC) : cityKey(String(props.adcode_cit || props.adcode), provinceKey(props)));
+      if (key && this.counts?.get(key)) this.onPick(key, this.level);
+      else this.onBlank();  // empty map: the app folds the sheet away
     });
     this.buildLayer();
   }
@@ -191,7 +192,8 @@ export class ClassMap {
   }
   setBottomInset(px) {this.inset = px;}
   // AMap 1.4 setFitView margins are [top, bottom, left, right] (not CSS order).
-  padding() {return [110, this.inset + 20, 40, 40];}
+  setRightInset(px) {this.right = px;}
+  padding() {return [110, this.inset + 20, 40, (this.right || 0) + 40];}
   fit() {
     this.wantsFit = true;
     if (!this.markers.length) return;

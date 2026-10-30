@@ -103,3 +103,9 @@ export async function loginAs(page, name) {
   await expect(page.locator('#app')).toBeVisible();
   await expect(page.locator('.pt .d').first()).toBeVisible({timeout: 30_000});
 }
+
+// The closed sheet is a slim bar; tap its title to open it (range, legend, list).
+export async function openSheet(page) {
+  if ((await page.locator('#sheet').getAttribute('data-detent')) === 'peek') await page.locator('#sheet-title').click();
+  await expect(page.locator('#range [data-preset="3y"]')).toBeInViewport();
+}

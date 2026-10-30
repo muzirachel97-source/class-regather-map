@@ -1,6 +1,6 @@
 import {municipalities} from './logic.js';
 import {monthPicker} from './pickers.js';
-import {escapeHTML, shortName} from './views.js';
+import {escapeHTML, shortName, textMatches} from './views.js';
 
 // "Update my location" flow inside the sheet (spec 5.5, 5.8): confirm-in-place first,
 // otherwise move to a searched city/country. No native selects or date inputs.
@@ -23,7 +23,7 @@ export function placeSearch(input, list, {mode, divisions, countries, onPick}) {
   let shown = [];
   const draw = () => {
     const query = input.value.trim();
-    shown = query ? candidates().filter(item => item.label.includes(query) || item.detail.includes(query)).slice(0, 6) : [];
+    shown = query ? candidates().filter(item => textMatches(item.label, query) || textMatches(item.detail, query)).slice(0, 6) : [];
     list.innerHTML = shown.map((item, i) => `<button type="button" data-place="${i}">${escapeHTML(item.label)}<span>${escapeHTML(item.detail)}</span></button>`).join('');
   };
   input.addEventListener('input', () => {onPick(null); draw();});
@@ -40,6 +40,10 @@ export function placeSearch(input, list, {mode, divisions, countries, onPick}) {
 
 let teardown = () => {};
 
+// The fields a stay PATCH must resend (the server validates the whole stay).
+const STAY_FIELDS = ['country_code', 'province_code', 'city_code', 'city_name', 'label', 'longitude', 'latitude', 'coordinate_system', 'started_on', 'ended_on', 'note'];
+const stayFields = stay => Object.fromEntries(STAY_FIELDS.map(key => [key, stay[key] ?? '']));
+
 export function renderUpdate(root, ctx) {
   teardown();
   // Everything this view hangs on window/visualViewport goes away with it.
@@ -50,22 +54,56 @@ export function renderUpdate(root, ctx) {
   const where = current ? (current.country_code === 'CHN' ? shortName(current.city_name) || shortName(current.province_name) : current.country_name) : '';
   const who = `<p class="who">正在更新：<b>${escapeHTML(me.name)}</b><button type="button" class="text-button">不是我</button></p>`;
 
+  const fields = (label = '', bio = '') => `
+      <label>在哪工作 / 上学（选填）<input id="update-label" type="text" maxlength="120" value="${escapeHTML(label)}" placeholder="比如：华为 · 坂田 / 武汉大学"></label>
+      <label>个人备注（选填，大家都能看到）<input id="update-bio" type="text" maxlength="240" value="${escapeHTML(bio)}" placeholder="比如：周末有空，来了喊我"></label>`;
+
+  // Save the personal note only when it changed; it lives on the member, so it needs the
+  // member's own version.
+  async function saveBio(bio) {
+    if (bio === (ctx.bio || '')) return;
+    const {member} = await api(`members/${me.id}`);
+    await api(`members/${me.id}`, 'PATCH', {name: member.name, bio, version: member.updated_at});
+  }
+
   function ask() {
     root.innerHTML = `${who}<div class="card"><p class="s">地图上显示你在</p><p class="big">${escapeHTML(where)}</p><p class="s">${ageText(current.confirmed_at, today)}</p></div>
       <button id="update-confirm" class="primary block" type="button">我还在${escapeHTML(where)}</button>
       <button id="update-move" class="secondary block" type="button">我搬家了</button>
       <p class="note">只有输入过班级查看码的同学能看到</p>`;
     bindWho();
-    root.querySelector('#update-confirm').onclick = event => run(event.currentTarget, async () => {
-      await api(`members/${me.id}/locations/${current.id}/confirm`, 'POST', {version: current.version});
-      notify(`已确认还在${where}`);
-      await onDone();
-    }, null, err => {
-      // Usually a version conflict: say why, then reload so a retry sends the fresh version.
-      notify(err.message, true);
-      ctx.onStale();
-    });
+    root.querySelector('#update-confirm').onclick = still;
     root.querySelector('#update-move').onclick = move;
+  }
+
+  // Still here: the city stays, but workplace and note have likely changed since 2015.
+  function still() {
+    root.innerHTML = `${who}<div class="card"><p class="s">还在</p><p class="big">${escapeHTML(where)}</p><p class="s">顺便看看下面两项还对不对</p></div>
+      ${fields(current.label, ctx.bio)}
+      <p class="field-error" role="alert"></p>
+      <div class="savebar"><button id="update-still-save" class="primary block" type="button">确认还在${escapeHTML(where)}</button></div>`;
+    bindWho();
+    const save = root.querySelector('#update-still-save'), error = root.querySelector('.field-error');
+    save.onclick = () => {
+      const label = root.querySelector('#update-label').value.trim(), bio = root.querySelector('#update-bio').value.trim();
+      root.querySelectorAll('input, button').forEach(control => {control.disabled = true;});
+      save.textContent = '正在保存…'; error.textContent = '';
+      // A changed workplace is an edit of this stay (which, by the member, also confirms it);
+      // otherwise the confirm endpoint refreshes the confirmation alone.
+      const location = label === (current.label || '')
+        ? api(`members/${me.id}/locations/${current.id}/confirm`, 'POST', {version: current.version})
+        : api(`members/${me.id}/locations/${current.id}`, 'PATCH', {...stayFields(current), label, version: current.version});
+      location.then(() => saveBio(bio)).then(async () => {
+        notify(`已确认还在${where}`);
+        await onDone();
+      }, err => {
+        root.querySelectorAll('input, button').forEach(control => {control.disabled = false;});
+        save.textContent = `确认还在${where}`;
+        error.textContent = `没保存成功：${err.message}`;
+        notify(err.message, true);
+        if (/更新/.test(err.message)) ctx.onStale();  // version conflict: reload, then retry with fresh data
+      });
+    };
   }
 
   function move() {
@@ -78,7 +116,7 @@ export function renderUpdate(root, ctx) {
       <button id="locate" class="text-button" type="button">用我现在的定位（只取到城市）</button>
       <div class="opt"><span>什么时候搬来的</span><button id="moved-at" type="button" class="text-button">选填 · 未填写</button></div>
       <p class="field-error" role="alert"></p>
-      <label>在做什么（选填）<input id="update-note" type="text" maxlength="500" placeholder="比如：南山 · 做游戏"></label>
+      ${fields('', ctx.bio)}
       <div class="savebar"><button id="update-save" class="primary block" type="button" disabled>保存</button></div>`;
     bindWho();
     const input = root.querySelector('#place-input'), save = root.querySelector('#update-save'), error = root.querySelector('.field-error');
@@ -114,9 +152,10 @@ export function renderUpdate(root, ctx) {
           city_code: picked.city.adcode, city_name: picked.city.name}
         : {country_code: picked.code, city_name: ''};
       // Freeze what is being saved: the form is locked, and the toast names this place.
-      const label = picked.label, payload = {...body, started_on: started, note: root.querySelector('#update-note').value.trim(), close_previous: true};
+      const label = picked.label, bio = root.querySelector('#update-bio').value.trim();
+      const payload = {...body, started_on: started, label: root.querySelector('#update-label').value.trim(), close_previous: true};
       setBusy(true); save.textContent = '正在保存…'; error.textContent = '';
-      api(`members/${me.id}/locations`, 'POST', payload).then(async () => {
+      api(`members/${me.id}/locations`, 'POST', payload).then(() => saveBio(bio)).then(async () => {
         notify(`已更新到${label} · 最近确认：今天${ctx.todayInRange() ? '' : '（不在当前筛选的时间段里）'}`);
         await onDone();
       }, err => {

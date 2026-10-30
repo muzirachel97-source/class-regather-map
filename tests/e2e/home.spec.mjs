@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {bootToday, markerSum, numberIn, presetLabel, unlock} from './helpers.mjs';
+import {bootToday, markerSum, numberIn, openSheet, presetLabel, unlock} from './helpers.mjs';
 
 test('default range is the last 3 years', async ({page}) => {
   await unlock(page);
@@ -11,6 +11,7 @@ test('default range is the last 3 years', async ({page}) => {
 
 test('counts agree across presets and scopes: header, sheet title and map dots', async ({page}) => {
   await unlock(page);
+  await openSheet(page);
   for (const preset of ['1y', '3y', 'all']) {
     await page.locator(`#range [data-preset="${preset}"]`).click();
     const china = await numberIn(page.locator('#count-china'));
@@ -24,6 +25,7 @@ test('counts agree across presets and scopes: header, sheet title and map dots',
 
 test('an empty range offers to widen it', async ({page}) => {
   await unlock(page);
+  await openSheet(page);
   await page.locator('#range [data-end=from]').click();
   await page.locator('.picker [data-year="2017"]').click();
   await page.locator('.picker [data-month="1"]').click();

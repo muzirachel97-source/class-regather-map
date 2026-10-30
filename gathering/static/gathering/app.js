@@ -3,7 +3,7 @@ import {ClassMap, chinaDivisions, createFootprintMap, loadMap} from './map.js';
 import {consistentCounts, inRange, isStale, memberKey, presetRange, splitForRegion} from './filter.js';
 import {createSheet} from './sheet.js';
 import {monthLabel, mountRange} from './range.js';
-import {matches, memberRow, otherGroup, placeOf, regionTitle, section, sectionTitle, shortName, summaryLine} from './views.js';
+import {matches, memberRow, otherGroup, placeOf, regionTitle, section, sectionTitle, shortName} from './views.js';
 import {closeUpdate, placeSearch, renderUpdate} from './update.js';
 import {dayPicker} from './pickers.js';
 import {buildEntryLink, readEntryLink} from './links.js';
@@ -76,9 +76,14 @@ async function boot() {
   if (pendingClaim && !boot.me) {pendingClaim = false; authDialog('claim');}
   // The map ends where the sheet begins, so AMap's logo, scale and review number stay
   // visible above it (they are never moved or hidden).
-  sheet ||= createSheet($('#sheet'), {stops: sheetStops, onChange: (detent, height) => {
+  sheet ||= createSheet($('#sheet'), {stops: sheetStops, openTo: () => wide.matches ? 'full' : 'half', onChange: (detent, height) => {
     $('#app').dataset.detent = detent;
-    $('#app').style.setProperty('--map-bottom', `${detent === 'full' ? sheetStops().peek : height}px`);
+    // Phones: the map ends where the sheet begins. Wide screens: the panel floats on the right.
+    $('#app').style.setProperty('--map-bottom', wide.matches ? '0px' : `${detent === 'full' ? sheetStops().peek : height}px`);
+    map?.setRightInset(wide.matches && detent !== 'peek' ? $('#sheet').offsetWidth + 16 : 0);
+    // The visible map just changed size: re-frame the home view so no dot ends up under the
+    // sheet or off screen — unless the user has already taken over the map.
+    if (map && state.view.type === 'home' && !map.userMoved) setTimeout(() => map.fit(), 60);
     renderSheet();
   }});
   await refresh();
@@ -95,6 +100,7 @@ async function boot() {
         return request;
       };
       map ||= new ClassMap(A, 'map', {divisions: loadDivisions(), onPick: openRegion, onClusterPick: () => {},
+        onBlank: () => {if (sheet.detent !== 'peek') sheet.snap('peek');},
         onUnplaced: n => {$('#unplaced').hidden = !n; $('#unplaced').textContent = n ? `地图上暂时少画了 ${n} 人，名单是完整的` : '';}});
       $('#map-status').hidden = true;
       render();
@@ -102,14 +108,14 @@ async function boot() {
     } catch (error) {$('#map-status').textContent = error.message;}
   }
 }
-// Sheet stops: peek ends just under the legend; half is ~55% of the screen.
+// Sheet stops: the closed sheet is a slim bar (title + one line); half is ~55% of the screen.
 function sheetStops() {
   const sheetTop = $('#sheet').getBoundingClientRect().top;
-  const peek = state.view.type === 'home' ? Math.round($('#peek-end').getBoundingClientRect().top - sheetTop + 12) : 260;
+  const peek = Math.round($('#peek-end').getBoundingClientRect().top - sheetTop + 10);
   const full = $('#sheet').offsetHeight;
-  // On short phones the peek is already ~half the screen; keep half clearly between the two.
   return {peek, half: Math.min(full - 80, Math.max(Math.round(innerHeight * 0.55), peek + 160)), full};
 }
+const wide = matchMedia('(min-width: 720px)');
 async function refresh() {
   const request = ++snapshotRequest;
   const result = await api('snapshot');
@@ -123,6 +129,11 @@ async function refresh() {
       onChange: (range, preset) => {state.range = range; state.preset = preset; render();}});
   }
   render();
+}
+function rangeLabel() {
+  const names = {'1y': '近 1 年', '3y': '近 3 年', all: '全部时间里'};
+  if (state.preset) return names[state.preset] + ' ';
+  return `${monthLabel(state.range.from)}–${state.range.to === null ? '今天' : monthLabel(state.range.to)} `;
 }
 function setScope(scope) {
   closeUpdate();
@@ -178,7 +189,7 @@ function renderSheet() {
     // Everything on the home sheet is the current scope (国内 or 海外), same as the map.
     const shown = counts[state.scope];
     $('#sheet-title').textContent = `${shown} 位同学`;
-    $('#sheet-summary').textContent = summaryLine(state.members.length);
+    $('#sheet-summary').textContent = `${rangeLabel()}确认过位置 · 全班 ${state.members.length} 人`;
     if (!shown) html = '<div id="empty" class="empty"><p>这个时间段还没有同学确认过位置</p><button id="expand-range" class="secondary" type="button">扩大时间范围</button></div>';
     else if (state.scope === 'world') html = countryGroups(full);
     else {
@@ -290,7 +301,8 @@ function openUpdate() {
   $('#sheet-summary').textContent = '';
   $('#list').innerHTML = '<div id="update"></div>';
   sheet.snap('full');
-  renderUpdate($('#update'), {me, current, today: state.boot.today, api, notify, countries: state.boot.countries || {},
+  const bio = state.members.find(member => member.id === me.id)?.bio || '';
+  renderUpdate($('#update'), {me, current, bio, today: state.boot.today, api, notify, countries: state.boot.countries || {},
     divisions: () => state.divisions, locate: locateCity,
     todayInRange: () => inRange(`${state.boot.today}T12:00:00+08:00`, state.range),
     onDone: async () => {closeUpdate(); await refresh(); goHome();},

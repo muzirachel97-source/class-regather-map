@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {dragSheet, openWuhan, unlock} from './helpers.mjs';
+import {dragSheet, openSheet, openWuhan, unlock} from './helpers.mjs';
 
 const months = page => page.locator('#sheet-body .mem:not(.old) .tag').evaluateAll(tags => tags.map(t => t.textContent.match(/\d{4}\.\d{2}/)?.[0]));
 
@@ -38,6 +38,7 @@ test('expand shows both groups, with the older records greyed', async ({page}) =
 
 test('overseas scope keeps the range and groups by country', async ({page}) => {
   await unlock(page);
+  await openSheet(page);
   await page.locator('#range [data-preset="all"]').click();
   await page.locator('#scope-seg [data-scope="world"]').click();
   await expect(page.locator('#range [data-preset="all"]')).toHaveClass(/\bon\b/);
@@ -93,8 +94,7 @@ test('tapping a row twice quickly builds only one footprint map', async ({page})
   });
   await dragSheet(page, -220);
   const row = page.locator('#sheet-body .mem').first();
-  await row.dispatchEvent('click');
-  await row.dispatchEvent('click');
+  await row.evaluate(el => {el.click(); el.click();});  // a true double tap: both land before the first request returns
   await expect(page.locator('#footprint-map')).toBeVisible();
   await page.waitForTimeout(2500);
   expect(await page.evaluate(() => window.__footprintMaps)).toBe(1);

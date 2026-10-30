@@ -14,7 +14,7 @@ export function rubberband(overshoot, dimension, constant = 0.55) {
 
 const THRESHOLD = 6;  // px of vertical travel before a press becomes a drag
 
-export function createSheet(el, {stops, onChange = () => {}}) {
+export function createSheet(el, {stops, onChange = () => {}, openTo = () => 'half'}) {
   let detent = 'peek', height = 0, drag = null;
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)');
   const apply = (value, animate) => {
@@ -55,12 +55,16 @@ export function createSheet(el, {stops, onChange = () => {}}) {
   };
   const release = event => {
     if (!drag || event.pointerId !== drag.id) return;
-    const {active, samples} = drag;
+    const {active, samples, target: drag_target} = drag;
     drag = null;
     removeEventListener('pointermove', move);
     removeEventListener('pointerup', release);
     removeEventListener('pointercancel', release);
-    if (!active) return;
+    if (!active) {
+      // A plain tap on the bar (not on a control in it) opens it, or folds it back.
+      if (drag_target?.closest('[data-drag]') && !drag_target.closest('button, a, input, label, .picker')) snap(detent === 'peek' ? openTo() : 'peek');
+      return;
+    }
     el.dataset.justDragged = '1';
     setTimeout(() => delete el.dataset.justDragged, 0);
     // Only motion in the last 100 ms counts: a finger that stopped before lifting has no flick.
@@ -72,7 +76,7 @@ export function createSheet(el, {stops, onChange = () => {}}) {
     if (event.button > 0) return;
     // In full the body scrolls, so only the handle and header start a drag.
     if (detent === 'full' && !event.target.closest('[data-drag]')) return;
-    drag = {id: event.pointerId, startY: event.clientY, startHeight: currentHeight(), active: false, samples: []};
+    drag = {id: event.pointerId, target: event.target, startY: event.clientY, startHeight: currentHeight(), active: false, samples: []};
     addEventListener('pointermove', move);
     addEventListener('pointerup', release);
     addEventListener('pointercancel', release);

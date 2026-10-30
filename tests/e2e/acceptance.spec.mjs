@@ -1,5 +1,5 @@
 import {test, expect} from '@playwright/test';
-import {dragSheet, loginAs, openWuhan, unlock} from './helpers.mjs';
+import {dragSheet, loginAs, openSheet, openWuhan, unlock} from './helpers.mjs';
 
 // Screens compared by hand against the B v3 mockups (class-regather-review/board/b3-*.png).
 // Read-only: nothing here saves, so later specs still see the seeded data.
@@ -7,6 +7,7 @@ const shot = (page, info, n) => page.screenshot({path: `artifacts/acceptance/${i
 const settle = page => page.waitForTimeout(1800);
 
 test('six screens for visual review', async ({page}, info) => {
+  test.setTimeout(120_000);  // six screens, two logins and map settling
   await unlock(page);
   await settle(page);
   await shot(page, info, 1);                        // ① home
@@ -17,6 +18,7 @@ test('six screens for visual review', async ({page}, info) => {
   await settle(page);
   await shot(page, info, 3);                        // ③ Wuhan full
   await page.locator('#region-close').click();
+  await openSheet(page);
   await page.locator('#range [data-preset="all"]').click();
   await page.locator('#scope-seg [data-scope="world"]').click();
   await dragSheet(page, -220);

@@ -1,10 +1,11 @@
 import {test, expect} from '@playwright/test';
-import {unlock} from './helpers.mjs';
+import {openSheet, unlock} from './helpers.mjs';
 
 const markerSum = page => page.locator('.pt .d').evaluateAll(dots => dots.reduce((sum, dot) => sum + Number(dot.textContent), 0));
 
 test('count markers sum to the domestic count shown in the header', async ({page}) => {
   await unlock(page);
+  await openSheet(page);
   await page.locator('#range [data-preset="all"]').click();
   const expected = await page.evaluate(async () => {
     const {members} = await (await fetch('api/snapshot', {credentials: 'same-origin'})).json();
